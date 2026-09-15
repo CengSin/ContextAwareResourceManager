@@ -1,0 +1,32 @@
+# Swift / SPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.xcuserstate
+
+# Packaged app
+dist/
+*.app
+*.dmg
+
+# Local data
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*~
+
+# Secrets (platform agent token lives here — never publish)
+AGENTS.md
+.env
+.env.*
