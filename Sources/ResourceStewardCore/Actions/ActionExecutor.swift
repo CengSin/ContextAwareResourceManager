@@ -147,6 +147,10 @@ public final class ActionExecutor: @unchecked Sendable {
     public func restorePersisted(_ saved: [FrozenProcess]) -> [FrozenProcess] {
         var kept: [FrozenProcess] = []
         for item in saved {
+            if KeepAlivePolicy.isKeepAlive(bundleID: item.bundleID, processName: item.processName) {
+                _ = kill(item.pid, SIGCONT)
+                continue
+            }
             let status = rs_process_status(item.pid)
             if status < 0 {
                 continue

@@ -36,7 +36,7 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         .disabled(!level.isAvailable)
                     }
-                    Text("半自动只会在场景切换时动手，而且只处理打分已经达到建议阈值的离场景应用。VPN/代理（Shadowrocket、Clash、Surge 等）和菜单栏常驻工具不会自动冻结。冻结后内存仍由系统自然回收。")
+                    Text("半自动只会在场景切换时动手，而且只处理打分已经达到建议阈值的离场景应用。VPN/代理（Shadowrocket、Clash、Surge 等）、容器/虚拟机（OrbStack、Docker 等）和菜单栏常驻工具不会冻结。冻结后内存仍由系统自然回收。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

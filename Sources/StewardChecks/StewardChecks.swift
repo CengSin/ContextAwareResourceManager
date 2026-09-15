@@ -115,6 +115,30 @@ enum StewardChecks {
         check("shadowrocket detected by bundle", KeepAlivePolicy.isKeepAlive(bundleID: "com.liguangming.Shadowrocket", processName: "Shadowrocket"))
         check("clashx detected by name", KeepAlivePolicy.isKeepAlive(bundleID: "com.example.foo", processName: "ClashX Pro"))
         check("chrome is not keep-alive", !KeepAlivePolicy.isKeepAlive(bundleID: "com.google.Chrome", processName: "Google Chrome"))
+        check("orbstack vmgr keep-alive", KeepAlivePolicy.isKeepAlive(bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper"))
+        check("orbstack app keep-alive", KeepAlivePolicy.isKeepAlive(bundleID: "dev.kdrag0n.MacVirt", processName: "OrbStack"))
+        check("docker desktop keep-alive", KeepAlivePolicy.isKeepAlive(bundleID: "com.docker.docker", processName: "Docker Desktop"))
+        check("colima keep-alive by name", KeepAlivePolicy.isKeepAlive(bundleID: nil, processName: "colima"))
+        check("sublime is not keep-alive", !KeepAlivePolicy.isKeepAlive(bundleID: "com.sublimetext.4", processName: "Sublime Text"))
+
+        let vmgr = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 9779, uid: 501, bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper",
+                path: "/Applications/OrbStack.app/Contents/Frameworks/OrbStack Helper.app",
+                memoryFootprintMB: 2500, cpuPercent: 12, isForeground: false, idleSeconds: 80_000
+            ),
+            workspace: nil
+        )
+        check("orbstack vmgr score zero", vmgr.isProtected && vmgr.score == 0 && vmgr.suggestedAction == .none)
+
+        let refuseVmgr = ActionExecutor().execute(
+            action: .freeze,
+            snapshot: ProcessSnapshot(
+                pid: 9779, uid: getuid(), bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper",
+                memoryFootprintMB: 2500, cpuPercent: 12, isForeground: false, idleSeconds: 80_000
+            )
+        )
+        check("refuses to freeze orbstack vmgr", !refuseVmgr.ok)
 
         let blacklisted = ReclaimScorer.score(
             snapshot: ProcessSnapshot(
@@ -131,6 +155,10 @@ enum StewardChecks {
         check("electron helper roots to parent", ProcessFamily.rootBundleID(from: "com.figma.Desktop.helper") == "com.figma.Desktop")
         check("plain app is its own root", ProcessFamily.rootBundleID(from: "com.apple.dt.Xcode") == "com.apple.dt.Xcode")
         check("firefox plugincontainer alias", ProcessFamily.rootBundleID(from: "org.mozilla.plugincontainer") == "org.mozilla.firefox")
+        check("orbstack vmgr roots to orbstack", ProcessFamily.rootBundleID(from: "dev.kdrag0n.MacVirt.vmgr") == "dev.kdrag0n.MacVirt")
+        check("orbstack scli roots to orbstack", ProcessFamily.rootBundleID(from: "dev.kdrag0n.MacVirt.scli") == "dev.kdrag0n.MacVirt")
+        check("orbstack main is its own root", ProcessFamily.rootBundleID(from: "dev.kdrag0n.MacVirt") == "dev.kdrag0n.MacVirt")
+        check("orbstack vmgr is companion", ProcessFamily.isCompanion(bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper"))
         check("renderer is companion", ProcessFamily.isCompanion(bundleID: "com.google.Chrome.helper.renderer", processName: "Google Chrome Helper (Renderer)"))
         check("chrome main is not companion", !ProcessFamily.isCompanion(bundleID: "com.google.Chrome", processName: "Google Chrome"))
         check("identity keys include parent", ProcessFamily.identityKeys(bundleID: "com.google.Chrome.helper.renderer", processName: "Renderer").contains("com.google.Chrome"))
@@ -392,6 +420,11 @@ enum StewardChecks {
         let restored = restoredExecutor.restorePersisted(store.loadFrozen())
         check("restore keeps process stopped", SystemMonitor().processStatus(pid: sleepPID) == 4)
         check("restore tracks pid", restoredExecutor.isFrozen(pid: sleepPID) && restored.contains(where: { $0.pid == sleepPID }))
+
+        let skippedKeepAlive = ActionExecutor().restorePersisted([
+            FrozenProcess(pid: 1_000_001, bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper", action: .freeze)
+        ])
+        check("restore does not re-freeze orbstack vmgr", skippedKeepAlive.isEmpty)
 
         _ = executor.thaw(pid: sleepPID)
         let reapplied = restoredExecutor.restorePersisted(store.loadFrozen())

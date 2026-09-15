@@ -1,7 +1,10 @@
 import Foundation
 
-/// Apps that must keep running across every workspace: VPN / proxy / tunnels.
-/// Freezing Shadowrocket (or Clash / Surge / WireGuard) drops the network path.
+/// Apps that must keep running across every workspace.
+///
+/// - VPN / proxy / tunnels: freezing Shadowrocket (or Clash / Surge / WireGuard) drops the network path.
+/// - Container / VM runtimes: freezing OrbStack's `vmgr` pauses the Linux VM, so MySQL and other
+///   containers stop accepting writes. Docker Desktop / Colima / Podman have the same failure mode.
 public enum KeepAlivePolicy: Sendable {
     public static let bundleIDs: Set<String> = [
         "com.liguangming.Shadowrocket",
@@ -44,7 +47,32 @@ public enum KeepAlivePolicy: Sendable {
         "com.qiuyuzhou.shadowsocksX-NG",
         "clowwindy.ShadowsocksX",
         "io.nekohasekai.sfa",
-        "com.nekohasekai.sfaw"
+        "com.nekohasekai.sfaw",
+        "dev.kdrag0n.MacVirt",
+        "dev.kdrag0n.MacVirt.vmgr",
+        "dev.kdrag0n.MacVirt.scli",
+        "com.orbstack.orbstack",
+        "com.docker.docker",
+        "com.electron.dockerdesktop",
+        "com.docker.helper",
+        "com.apple.docker",
+        "io.github.containers.podman",
+        "com.rancherdesktop.app",
+        "io.rancherdesktop.app",
+        "com.utmapp.UTM",
+        "com.parallels.desktop.console",
+        "com.vmware.fusion",
+        "org.virtualbox.app.VirtualBox"
+    ]
+
+    private static let bundlePrefixes = [
+        "dev.kdrag0n.macvirt",
+        "com.docker.",
+        "com.electron.docker",
+        "io.lima.",
+        "com.utmapp.",
+        "com.parallels.",
+        "com.vmware."
     ]
 
     private static let fragments = [
@@ -83,18 +111,35 @@ public enum KeepAlivePolicy: Sendable {
         "viscosity",
         "twingate",
         "anyconnect",
-        "forticlient"
+        "forticlient",
+        "orbstack",
+        "macvirt",
+        "docker.app",
+        "docker desktop",
+        "colima",
+        "podman",
+        "qemu-system",
+        "rancher desktop",
+        "rancherdesktop",
+        "utm.app",
+        "virtualbox",
+        "containerd",
+        ".orbstack/"
     ]
 
     public static func isKeepAlive(bundleID: String?, processName: String, path: String = "") -> Bool {
         if let bundleID {
             if bundleIDs.contains(bundleID) { return true }
             let id = bundleID.lowercased()
+            if bundlePrefixes.contains(where: { id == $0 || id.hasPrefix($0) }) {
+                return true
+            }
             if id.contains("packettunnel")
                 || id.contains("packet-tunnel")
                 || id.contains("wireguard")
                 || id.contains("networkextension")
-                || id.contains("tunnelprovider") {
+                || id.contains("tunnelprovider")
+                || id.contains("orbstack") {
                 return true
             }
         }

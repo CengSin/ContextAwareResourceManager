@@ -13,7 +13,7 @@ macOS 菜单栏里的 **Context-aware resource manager**。
 - Chrome 等应用的 Helper / Renderer 并入主应用，不会单独降级（单独处理会打断开链接等 IPC）
 - 建议动作：降低 CPU 优先级、冻结（`SIGSTOP`）、请求退出
 - 默认只建议，点「应用建议」并确认后才执行
-- 可在设置中开启 **切场景半自动（Level 1）**：切换到已识别场景并稳定约 15 秒后，自动降低优先级或冻结离场景应用；退出建议会改成冻结。未分类不触发。VPN/代理（Shadowrocket 等）和菜单栏常驻工具不会自动处理
+- 可在设置中开启 **切场景半自动（Level 1）**：切换到已识别场景并稳定约 15 秒后，自动降低优先级或冻结离场景应用；退出建议会改成冻结。未分类不触发。VPN/代理（Shadowrocket 等）、容器/虚拟机（OrbStack、Docker 等）和菜单栏常驻工具不会冻结；`python` 这类没有 App bundle 的进程也不会被半自动处理
 - 按当前时段记录场景切换习惯，并在「场景」页展示接下来最常去的场景（不据此改打分）
 - 退出管家时自动解冻，并恢复已降低的优先级
 - 全部数据留在本机 SQLite，无网络上传
@@ -42,11 +42,15 @@ macOS 菜单栏里的 **Context-aware resource manager**。
 ```bash
 swift run StewardChecks          # 核心算法与本机采样检查
 swift build -c release
-./scripts/package-app.sh         # 生成 dist/ResourceSteward.app
+./scripts/package-app.sh                 # 生成 dist/ResourceSteward.app
+./scripts/package-app.sh --version 1.1.0 # 写入 CFBundleShortVersionString
+./scripts/package-app.sh 1.1.0 --build 12
 open dist/ResourceSteward.app
 ```
 
-每次 push 到 `main` 时，GitHub Actions 会在 macOS 上跑 StewardChecks 并打包 `ResourceSteward.app`。产物在对应 run 的 Artifacts 里，文件名是 `ResourceSteward.app.zip`。打 `v*` 标签（例如 `v1.1.0`）会把同一个 zip 挂到 GitHub Release。
+`make app VERSION=1.1.0 BUILD=12` 同样可以把版本写进包里。不传时用 `Resources/Info.plist` 里的值；CI 里 `--build` 默认是 GitHub run number。
+
+每次 push 到 `main` 时，GitHub Actions 会在 macOS 上跑 StewardChecks、打包，并把 `ResourceSteward-<version>.zip` 更新到 Releases 的 **Latest build**（预发布，tag 为 `latest`）。打 `v*` 标签（例如 `v1.1.0`）会用标签版本号打包，并创建一个正式 GitHub Release，zip 挂在 Release 资源里。Actions run 的 Artifacts 里也能下载同一份 zip，保留 14 天。
 
 开发时也可以：
 

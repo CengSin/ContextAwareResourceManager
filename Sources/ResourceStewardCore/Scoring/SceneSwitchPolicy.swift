@@ -256,6 +256,7 @@ public enum SceneSwitchPolicy: Sendable {
                   !target.isProtected,
                   !target.isAccessory,
                   !target.isInCurrentWorkspace,
+                  isAppBundle(target.bundleID),
                   let action = autoAction(for: target.suggestedAction)
             else { return nil }
             if action == .freeze && target.alreadyFrozen { return nil }
@@ -288,6 +289,12 @@ public enum SceneSwitchPolicy: Sendable {
                 )
             )
         )
+    }
+
+    /// Level 1 only auto-handles real apps (reverse-DNS bundle IDs).
+    /// `python`, `fontd`, `suggestd` and other nameless daemons are not workspace apps.
+    public static func isAppBundle(_ bundleID: String) -> Bool {
+        bundleID.contains(".")
     }
 
     public static func summary(

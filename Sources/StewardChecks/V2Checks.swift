@@ -366,6 +366,40 @@ enum V2Checks {
         )
         check("skips keep-alive vpn", plan.actions.isEmpty)
 
+        let pythonCLI = SceneSwitchTarget(
+            groupKey: "python",
+            bundleID: "python",
+            processName: "python",
+            suggestedAction: .throttle,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false
+        )
+        let vmgrTarget = SceneSwitchTarget(
+            groupKey: "dev.kdrag0n.MacVirt",
+            bundleID: "dev.kdrag0n.MacVirt.vmgr",
+            processName: "OrbStack Helper",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: true,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false
+        )
+        var daemonState = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
+        (daemonState, plan) = SceneSwitchPolicy.evaluate(
+            state: daemonState,
+            authorization: .sceneSwitch,
+            current: funMatch,
+            targets: [pythonCLI, vmgrTarget],
+            frozen: [],
+            now: t0,
+            debounceSeconds: 0
+        )
+        check("skips python cli and orbstack vmgr", plan.outcome == .committedWithAuto && plan.actions.isEmpty)
+
         var flap = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
         (flap, plan) = SceneSwitchPolicy.evaluate(
             state: flap,

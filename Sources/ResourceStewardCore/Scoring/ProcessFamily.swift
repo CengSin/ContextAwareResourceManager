@@ -9,11 +9,25 @@ public enum ProcessFamily: Sendable {
         "org.mozilla.firefox.plugincontainer": "org.mozilla.firefox"
     ]
 
+    /// Sibling bundles that are not named `*.helper.*` but still belong to the parent app.
+    /// OrbStack's VM (`dev.kdrag0n.MacVirt.vmgr`) is the process that actually runs containers.
+    private static let familyPrefixes: [(prefix: String, root: String)] = [
+        ("dev.kdrag0n.MacVirt.", "dev.kdrag0n.MacVirt"),
+        ("com.docker.", "com.docker.docker")
+    ]
+
     /// Parent bundle ID. `com.google.Chrome.helper.renderer` → `com.google.Chrome`.
     public static func rootBundleID(from bundleID: String?) -> String? {
         guard let bundleID, !bundleID.isEmpty else { return bundleID }
         if let mapped = hostedCompanions[bundleID] {
             return mapped
+        }
+        let lowered = bundleID.lowercased()
+        for pair in familyPrefixes {
+            if lowered.hasPrefix(pair.prefix.lowercased()),
+               lowered != pair.root.lowercased() {
+                return pair.root
+            }
         }
         if let range = bundleID.range(of: ".helper", options: .caseInsensitive) {
             let root = String(bundleID[..<range.lowerBound])

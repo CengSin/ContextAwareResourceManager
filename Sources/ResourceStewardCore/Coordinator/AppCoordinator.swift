@@ -126,6 +126,7 @@ public final class AppCoordinator: ObservableObject {
         }
 
         executor.prune(livePIDs: Set(snapshots.map(\.pid)))
+        thawKeepAliveIfFrozen()
         persistFrozen()
 
         let windowStart = now.addingTimeInterval(-settings.matchingWindowMinutes * 60)
@@ -386,6 +387,17 @@ public final class AppCoordinator: ObservableObject {
 
     private func persistFrozen() {
         try? store.replaceFrozen(executor.frozenProcesses)
+    }
+
+    /// Container / VPN keep-alive processes must never stay SIGSTOP'd, even if an older
+    /// build froze them. Resume and drop them from the freeze list on every sample.
+    private func thawKeepAliveIfFrozen() {
+        let stuck = executor.frozenProcesses.filter {
+            KeepAlivePolicy.isKeepAlive(bundleID: $0.bundleID, processName: $0.processName)
+        }
+        for item in stuck {
+            _ = executor.thaw(pid: item.pid)
+        }
     }
 
     private func handleActivation(_ activation: AppActivation) {

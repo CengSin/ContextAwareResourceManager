@@ -33,7 +33,7 @@ struct OnboardingView: View {
                 OnboardPoint(
                     icon: "pause.rectangle",
                     title: "默认只建议，切场景半自动可在设置里打开",
-                    detail: "默认所有处理都要你确认。开启 Level 1 后，切换到已识别场景时会自动冻结离场景应用；退出建议会改成冻结。未分类不触发。"
+                    detail: "默认所有处理都要你确认。开启 Level 1 后，切换到已识别场景时会自动冻结离场景应用；退出建议会改成冻结。未分类不触发。OrbStack / Docker 等容器运行时不会被冻结。"
                 )
                 OnboardPoint(
                     icon: "questionmark.circle",
