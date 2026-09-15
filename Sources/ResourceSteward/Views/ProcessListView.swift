@@ -124,7 +124,7 @@ struct ProcessListView: View {
             Text("已冻结")
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 14)
-            Text("退出管家后仍保持冻结，直到点恢复。")
+            Text("退出管家时会自动解冻。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 14)

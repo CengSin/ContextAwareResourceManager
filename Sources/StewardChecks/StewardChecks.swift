@@ -399,6 +399,31 @@ enum StewardChecks {
 
         let thawResult = restoredExecutor.thaw(pid: sleepPID)
         check("thaw sleep succeeds", thawResult.ok)
+
+        let sleeper2 = Process()
+        sleeper2.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        sleeper2.arguments = ["8"]
+        try sleeper2.run()
+        let sleepPID2 = Int32(sleeper2.processIdentifier)
+        let freezeSnapshot2 = ProcessSnapshot(
+            pid: sleepPID2,
+            uid: UInt32(getuid()),
+            bundleID: nil,
+            processName: "sleep",
+            memoryFootprintMB: 1,
+            cpuPercent: 0,
+            isForeground: false,
+            idleSeconds: 120
+        )
+        let quitExecutor = ActionExecutor()
+        check("quit-path freeze", quitExecutor.execute(action: .freeze, snapshot: freezeSnapshot2).ok)
+        check("quit-path frozen", SystemMonitor().processStatus(pid: sleepPID2) == 4)
+        quitExecutor.thawAll()
+        check("thawAll on quit resumes", SystemMonitor().processStatus(pid: sleepPID2) != 4)
+        check("thawAll clears freeze list", quitExecutor.frozenProcesses.isEmpty)
+        sleeper2.terminate()
+        sleeper2.waitUntilExit()
+
         sleeper.terminate()
         sleeper.waitUntilExit()
 

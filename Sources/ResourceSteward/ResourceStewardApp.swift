@@ -2,8 +2,18 @@ import AppKit
 import ResourceStewardCore
 import SwiftUI
 
+@MainActor
+final class StewardAppDelegate: NSObject, NSApplicationDelegate {
+    weak var coordinator: AppCoordinator?
+
+    func applicationWillTerminate(_ notification: Notification) {
+        coordinator?.stop()
+    }
+}
+
 @main
 struct ResourceStewardApp: App {
+    @NSApplicationDelegateAdaptor(StewardAppDelegate.self) private var appDelegate
     @StateObject private var coordinator: AppCoordinator
 
     init() {
@@ -21,7 +31,10 @@ struct ResourceStewardApp: App {
         MenuBarExtra {
             MenuBarPanel()
                 .environmentObject(coordinator)
-                .onAppear { coordinator.start() }
+                .onAppear {
+                    appDelegate.coordinator = coordinator
+                    coordinator.start()
+                }
         } label: {
             StatusBarLabel()
                 .environmentObject(coordinator)

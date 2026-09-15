@@ -63,7 +63,7 @@ public final class AppCoordinator: ObservableObject {
         NSApp.setActivationPolicy(.accessory)
         pressureMonitor.start()
         collector.start()
-        restorePersistedFreezes()
+        thawLeftoverFreezes()
         transitionCache = store.loadWorkspaceTransitions()
         refresh()
         let interval = max(2, settings.sampleIntervalSeconds)
@@ -75,7 +75,9 @@ public final class AppCoordinator: ObservableObject {
     }
 
     public func stop() {
-        persistFrozen()
+        executor.thawAll()
+        frozen = []
+        try? store.replaceFrozen([])
         timer?.invalidate()
         timer = nil
         collector.stop()
@@ -364,12 +366,20 @@ public final class AppCoordinator: ObservableObject {
         refresh()
     }
 
-    private func restorePersistedFreezes() {
-        let restored = executor.restorePersisted(store.loadFrozen())
-        try? store.replaceFrozen(restored)
-        frozen = restored
-        if !restored.isEmpty {
-            lastMessage = "已恢复 \(restored.count) 个上次冻结的进程（退出管家不会自动解冻）。"
+    /// Crash / force-quit cannot SIGCONT. Resume anything still listed from last session.
+    private func thawLeftoverFreezes() {
+        let leftover = store.loadFrozen()
+        guard !leftover.isEmpty else { return }
+        var resumed = 0
+        for item in leftover {
+            if executor.thaw(pid: item.pid).ok {
+                resumed += 1
+            }
+        }
+        try? store.replaceFrozen([])
+        frozen = []
+        if resumed > 0 {
+            lastMessage = "上次未正常退出，已自动恢复 \(resumed) 个冻结进程。"
             lastMessageIsError = false
         }
     }

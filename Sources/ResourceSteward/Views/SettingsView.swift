@@ -64,7 +64,7 @@ struct SettingsView: View {
                     Text("本工具不能压缩其他进程的内存页，也不能获取其他进程的 task port。菜单栏里出现的处理动作只有：降低优先级、冻结、退出。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("退出管家不会自动解冻。已冻结的进程会保持暂停，直到你点「恢复」、进程自己退出，或电脑重启。")
+                    Text("退出管家时会自动解冻，并恢复已降低的优先级。若被强制结束，下次启动也会把上次留下的冻结进程恢复。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("数据只保存在本机 SQLite，无网络上传。")

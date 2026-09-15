@@ -131,7 +131,7 @@ struct MenuBarPanel: View {
                 Image(systemName: "power")
             }
             .buttonStyle(.borderless)
-            .help("退出场景管家")
+            .help("退出场景管家（会自动解冻）")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
