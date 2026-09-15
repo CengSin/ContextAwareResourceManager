@@ -18,17 +18,19 @@ public final class ContextCollector: @unchecked Sendable {
         stop()
         captureCurrent()
         let center = NSWorkspace.shared.notificationCenter
-        let token = center.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            let bundleID = app?.bundleIdentifier
-            let name = app?.localizedName ?? app?.executableURL?.lastPathComponent
-            self?.record(bundleID: bundleID, name: name)
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.didLaunchApplicationNotification] {
+            let token = center.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                let bundleID = app?.bundleIdentifier
+                let localized = app?.localizedName ?? app?.executableURL?.lastPathComponent
+                self?.record(bundleID: bundleID, name: localized)
+            }
+            observations.append(token)
         }
-        observations.append(token)
     }
 
     public func stop() {

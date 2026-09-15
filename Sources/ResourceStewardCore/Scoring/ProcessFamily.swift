@@ -80,6 +80,27 @@ public enum ProcessFamily: Sendable {
         return nil
     }
 
+    /// Dock / Spotlight / Cmd-Tab opening an app should resume every frozen member of that family.
+    public static func matchesUserOpen(
+        frozenBundleID: String,
+        frozenName: String,
+        openedBundleID: String,
+        openedName: String
+    ) -> Bool {
+        let frozenRoot = rootBundleID(from: frozenBundleID.isEmpty ? nil : frozenBundleID) ?? frozenBundleID
+        let openedRoot = rootBundleID(from: openedBundleID.isEmpty ? nil : openedBundleID) ?? openedBundleID
+        if !openedRoot.isEmpty, frozenRoot.caseInsensitiveCompare(openedRoot) == .orderedSame {
+            return true
+        }
+        if !openedBundleID.isEmpty, frozenBundleID.caseInsensitiveCompare(openedBundleID) == .orderedSame {
+            return true
+        }
+        if !openedName.isEmpty, frozenName.caseInsensitiveCompare(openedName) == .orderedSame {
+            return true
+        }
+        return false
+    }
+
     public static func isIndependentCompanionAction(snapshots: [ProcessSnapshot]) -> Bool {
         guard !snapshots.isEmpty else { return false }
         return snapshots.allSatisfy {

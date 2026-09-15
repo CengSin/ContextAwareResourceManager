@@ -159,6 +159,33 @@ enum StewardChecks {
         check("orbstack scli roots to orbstack", ProcessFamily.rootBundleID(from: "dev.kdrag0n.MacVirt.scli") == "dev.kdrag0n.MacVirt")
         check("orbstack main is its own root", ProcessFamily.rootBundleID(from: "dev.kdrag0n.MacVirt") == "dev.kdrag0n.MacVirt")
         check("orbstack vmgr is companion", ProcessFamily.isCompanion(bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper"))
+        check(
+            "opening chrome thaws chrome helper freeze",
+            ProcessFamily.matchesUserOpen(
+                frozenBundleID: "com.google.Chrome.helper.renderer",
+                frozenName: "Google Chrome Helper (Renderer)",
+                openedBundleID: "com.google.Chrome",
+                openedName: "Google Chrome"
+            )
+        )
+        check(
+            "opening chrome does not thaw safari",
+            !ProcessFamily.matchesUserOpen(
+                frozenBundleID: "com.apple.Safari",
+                frozenName: "Safari",
+                openedBundleID: "com.google.Chrome",
+                openedName: "Google Chrome"
+            )
+        )
+        check(
+            "empty open does not match empty freeze",
+            !ProcessFamily.matchesUserOpen(
+                frozenBundleID: "",
+                frozenName: "sleep",
+                openedBundleID: "",
+                openedName: ""
+            )
+        )
         check("renderer is companion", ProcessFamily.isCompanion(bundleID: "com.google.Chrome.helper.renderer", processName: "Google Chrome Helper (Renderer)"))
         check("chrome main is not companion", !ProcessFamily.isCompanion(bundleID: "com.google.Chrome", processName: "Google Chrome"))
         check("identity keys include parent", ProcessFamily.identityKeys(bundleID: "com.google.Chrome.helper.renderer", processName: "Renderer").contains("com.google.Chrome"))
@@ -496,6 +523,34 @@ enum StewardChecks {
 
         let thawResult = restoredExecutor.thaw(pid: sleepPID)
         check("thaw sleep succeeds", thawResult.ok)
+
+        let sleeperOpen = Process()
+        sleeperOpen.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        sleeperOpen.arguments = ["8"]
+        try sleeperOpen.run()
+        let openPID = Int32(sleeperOpen.processIdentifier)
+        let openExecutor = ActionExecutor()
+        check(
+            "freeze for dock-thaw",
+            openExecutor.execute(
+                action: .freeze,
+                snapshot: ProcessSnapshot(
+                    pid: openPID,
+                    uid: UInt32(getuid()),
+                    bundleID: "com.example.frozen",
+                    processName: "Example",
+                    memoryFootprintMB: 1,
+                    cpuPercent: 0,
+                    isForeground: false,
+                    idleSeconds: 120
+                )
+            ).ok
+        )
+        check("unrelated activation leaves freeze", openExecutor.thawMatchingActivation(bundleID: "com.apple.Safari", processName: "Safari") == 0)
+        check("still frozen after unrelated open", SystemMonitor().processStatus(pid: openPID) == 4)
+        check("dock thaw resumes matching freeze", openExecutor.thawMatchingActivation(bundleID: "com.example.frozen", processName: "Example") == 1)
+        check("dock thaw process running", SystemMonitor().processStatus(pid: openPID) != 4)
+        sleeperOpen.terminate()
 
         let sleeper2 = Process()
         sleeper2.executableURL = URL(fileURLWithPath: "/bin/sleep")

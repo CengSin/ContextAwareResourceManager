@@ -108,6 +108,24 @@ public final class ActionExecutor: @unchecked Sendable {
         }
     }
 
+    public func thawMatchingActivation(bundleID: String, processName: String) -> Int {
+        let targets = frozenProcesses.filter {
+            ProcessFamily.matchesUserOpen(
+                frozenBundleID: $0.bundleID,
+                frozenName: $0.processName,
+                openedBundleID: bundleID,
+                openedName: processName
+            )
+        }
+        var count = 0
+        for item in targets {
+            if thaw(pid: item.pid).ok {
+                count += 1
+            }
+        }
+        return count
+    }
+
     public func thaw(pid: Int32) -> ActionResult {
         let result = sendSignal(pid: pid, signal: SIGCONT)
         if result.ok {

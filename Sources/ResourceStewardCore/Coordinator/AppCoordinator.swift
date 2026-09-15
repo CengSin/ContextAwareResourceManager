@@ -86,6 +86,8 @@ public final class AppCoordinator: ObservableObject {
     }
 
     public func refresh() {
+        thawFrontmostIfFrozen()
+
         let host = monitor.sampleHost()
         let cpu = monitor.sampleCPU()
         let gpu = monitor.sampleGPU()
@@ -462,6 +464,31 @@ public final class AppCoordinator: ObservableObject {
             workspaces[index].lastActiveAt = activation.timestamp
             try? store.saveWorkspace(workspaces[index])
         }
+        if thawOnUserOpen(bundleID: activation.bundleID, processName: activation.processName) > 0 {
+            refresh()
+        }
+    }
+
+    /// Dock, Spotlight, or Cmd-Tab of a frozen app is an explicit "I need this now".
+    @discardableResult
+    private func thawOnUserOpen(bundleID: String, processName: String) -> Int {
+        let count = executor.thawMatchingActivation(bundleID: bundleID, processName: processName)
+        if count > 0 {
+            frozen = executor.frozenProcesses
+            persistFrozen()
+            lastMessage = "你打开了「\(processName.isEmpty ? bundleID : processName)」，已自动恢复 \(count) 个冻结进程。"
+            lastMessageIsError = false
+        }
+        return count
+    }
+
+    private func thawFrontmostIfFrozen() {
+        guard !executor.frozenProcesses.isEmpty else { return }
+        let front = NSWorkspace.shared.frontmostApplication
+        let bundleID = front?.bundleIdentifier ?? ""
+        let name = front?.localizedName ?? front?.executableURL?.lastPathComponent ?? ""
+        guard !bundleID.isEmpty || !name.isEmpty else { return }
+        _ = thawOnUserOpen(bundleID: bundleID, processName: name)
     }
 
     private func cpuPercent(pid: Int32, cpuTimeNs: UInt64, now: Date) -> Double {

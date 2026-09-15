@@ -220,7 +220,7 @@ func execute(action: SuggestedAction, pid: pid_t) {
 - **用户常用**：用户可在「常用」页勾选任意 App（跨场景保活）。分数归零，半自动与手动都不冻结；Helper 随主应用一起保护。与场景核心 App 不同：常用不依赖当前 workspace。
 - **半自动范围**：Level 1 只处理带 reverse-DNS bundle ID 的 App；`python` / `fontd` 这类进程名不会被切场景自动降级。
 - **动作降级**：Level 1 将 `.quit` 改成 `.freeze`，避免未保存窗口被自动关掉。`.throttle` / `.freeze` 按建议执行。
-- **恢复**：属于新场景核心 App 的已冻结进程会被 `SIGCONT` 恢复。
+- **恢复**：属于新场景核心 App 的已冻结进程会被 `SIGCONT` 恢复。用户从 Dock / Spotlight / Cmd-Tab 打开某个已冻结 App 时，按进程族解冻（含 Helper），不需要再到管家里点「恢复」。
 - **Level 0**：仍记录切换（见 5.5），但不自动执行。
 - **Level 2**：v3 才开放；当前若被写入配置会回退到 Level 0。
 
