@@ -4,6 +4,7 @@ import SwiftUI
 struct ProcessListView: View {
     @EnvironmentObject private var coordinator: AppCoordinator
     @State private var expandedID: String?
+    @State private var query = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,22 +46,29 @@ struct ProcessListView: View {
                     .font(.caption)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 6)
+            .padding(.top, 6)
 
-            if coordinator.visibleGroups.isEmpty {
+            TextField("筛选名称，例如 Chrome", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 6)
+
+            if displayedGroups.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "checkmark.circle")
                         .font(.title2)
                         .foregroundStyle(.secondary)
-                    Text(coordinator.settings.showOnlyActionable ? "没有达到建议阈值的进程" : "正在采集进程…")
+                    Text(emptyListText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(coordinator.visibleGroups) { group in
+                        ForEach(displayedGroups) { group in
                             ProcessGroupRow(group: group, expanded: expandedID == group.id)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
@@ -74,6 +82,31 @@ struct ProcessListView: View {
                 }
             }
         }
+    }
+
+    private var displayedGroups: [ProcessGroupViewModel] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let source = needle.isEmpty ? coordinator.visibleGroups : coordinator.processGroups
+        guard !needle.isEmpty else { return source }
+        return source.filter { group in
+            group.displayName.lowercased().contains(needle)
+                || group.key.lowercased().contains(needle)
+                || group.members.contains { member in
+                    member.snapshot.processName.lowercased().contains(needle)
+                        || (member.snapshot.bundleID?.lowercased().contains(needle) ?? false)
+                }
+        }
+    }
+
+    private var emptyListText: String {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !needle.isEmpty {
+            return "没有匹配「\(needle)」的进程"
+        }
+        if coordinator.settings.showOnlyActionable {
+            return "没有达到建议阈值的进程。正在使用的 App（例如 Chrome）分数会被打到 0，请关掉「只看建议」或在上方搜索。"
+        }
+        return "正在采集进程…"
     }
 
     private var actionableBinding: Binding<Bool> {
@@ -146,8 +179,17 @@ private struct ProcessGroupRow: View {
                                 .padding(.vertical, 1)
                                 .background(Color.blue.opacity(0.15), in: Capsule())
                         }
+                        if group.isKeepAlive {
+                            Text("常驻")
+                                .font(.system(size: 9, weight: .semibold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.purple.opacity(0.16), in: Capsule())
+                        }
                         if group.members.count > 1 {
-                            Text("\(group.members.count) 个进程")
+                            Text(group.companionCount > 0
+                                 ? "\(group.members.count) 个进程 · 含 Helper"
+                                 : "\(group.members.count) 个进程")
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(.secondary)
                         }
@@ -180,6 +222,12 @@ private struct ProcessGroupRow: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
+                } else if group.appliedAction == .throttle {
+                    Button("恢复优先级") {
+                        coordinator.restorePriority(for: group)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
                 } else if group.effectiveSuggestion != .none {
                     Button("应用建议") {
                         coordinator.request(group.effectiveSuggestion, for: group)
@@ -195,9 +243,19 @@ private struct ProcessGroupRow: View {
                 if group.members.count > 1 {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(group.members) { member in
-                            Text("PID \(member.snapshot.pid)  \(member.snapshot.processName)  \(ByteFormat.mb(member.snapshot.memoryFootprintMB))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            HStack(spacing: 6) {
+                                Text("PID \(member.snapshot.pid)  \(member.snapshot.processName)  \(ByteFormat.mb(member.snapshot.memoryFootprintMB))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                if let role = ProcessFamily.roleLabel(
+                                    bundleID: member.snapshot.bundleID,
+                                    processName: member.snapshot.processName
+                                ) {
+                                    Text(role)
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
                         }
                     }
                 }

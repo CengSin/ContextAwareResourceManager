@@ -10,10 +10,12 @@ struct WorkspaceEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("工作场景由你手动定义。管家用最近 \(Int(coordinator.settings.matchingWindowMinutes)) 分钟的前台 App 与核心 App 做 Jaccard 匹配；低于 \(thresholdPercent) 则视为未分类，不套用场景保护。")
+            Text("工作场景由你手动定义。管家用最近 \(Int(coordinator.settings.matchingWindowMinutes)) 分钟的前台 App 与核心 App 做 Jaccard 匹配；低于 \(thresholdPercent) 则视为未分类，不套用场景保护，也不触发半自动处理。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(14)
+
+            forecastSection
 
             if coordinator.workspaces.isEmpty {
                 Text("还没有场景。从下面正在运行的 App 勾选核心应用，例如把 Xcode 和终端放进「编程」。")
@@ -56,7 +58,7 @@ struct WorkspaceEditorView: View {
                     }
                 }
                 .listStyle(.inset)
-                .frame(height: 140)
+                .frame(height: 120)
             }
 
             Divider()
@@ -122,6 +124,36 @@ struct WorkspaceEditorView: View {
 
     private var thresholdPercent: String {
         String(format: "%.0f%%", coordinator.settings.matchingThreshold * 100)
+    }
+
+    @ViewBuilder
+    private var forecastSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("切换习惯")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if coordinator.forecastSampleCount == 0 {
+                Text("使用一段时间并在场景之间切换后，这里会按当前时段显示你接下来最常去的场景。目前只用来展示习惯，不会据此改打分或自动处理。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("基于\(coordinator.forecastScope.title)的 \(coordinator.forecastSampleCount) 次切换")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                ForEach(Array(coordinator.forecasts.prefix(3))) { forecast in
+                    HStack {
+                        Text(forecast.name)
+                            .font(.caption)
+                        Spacer()
+                        Text(String(format: "%.0f%% · %d 次", forecast.probability * 100, forecast.sampleCount))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
     }
 
     private var filteredApps: [RunningAppInfo] {

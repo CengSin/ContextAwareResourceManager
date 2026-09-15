@@ -291,14 +291,77 @@ public final class LocalStore: @unchecked Sendable {
         }
     }
 
+    public func insertWorkspaceTransition(
+        from: UUID?,
+        to: UUID?,
+        at: Date = Date(),
+        calendar: Calendar = .current
+    ) throws {
+        guard WorkspaceMarkov.shouldRecord(from: from, to: to) else { return }
+        let hour = WorkspaceMarkov.hour(of: at, calendar: calendar)
+        let weekday = WorkspaceMarkov.weekday(of: at, calendar: calendar)
+        try queue.sync {
+            try execLocked(
+                """
+                INSERT INTO workspace_transitions(from_id, to_id, hour, weekday, timestamp)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                bind: { stmt in
+                    bindText(stmt, 1, from?.uuidString ?? "")
+                    bindText(stmt, 2, to?.uuidString ?? "")
+                    sqlite3_bind_int(stmt, 3, Int32(hour))
+                    sqlite3_bind_int(stmt, 4, Int32(weekday))
+                    sqlite3_bind_double(stmt, 5, at.timeIntervalSince1970)
+                }
+            )
+        }
+    }
+
+    public func loadWorkspaceTransitions(limit: Int = 4000) -> [WorkspaceTransition] {
+        queue.sync {
+            var rows: [WorkspaceTransition] = []
+            try? queryLocked(
+                """
+                SELECT id, from_id, to_id, hour, weekday, timestamp
+                FROM workspace_transitions
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(limit)) }
+            ) { stmt in
+                let id = sqlite3_column_int64(stmt, 0)
+                let fromID = uuidColumn(stmt, 1)
+                let toID = uuidColumn(stmt, 2)
+                let hour = Int(sqlite3_column_int(stmt, 3))
+                let weekday = Int(sqlite3_column_int(stmt, 4))
+                let timestamp = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 5))
+                rows.append(
+                    WorkspaceTransition(
+                        id: id,
+                        fromWorkspaceID: fromID,
+                        toWorkspaceID: toID,
+                        hourOfDay: hour,
+                        weekday: weekday,
+                        timestamp: timestamp
+                    )
+                )
+            }
+            return rows
+        }
+    }
+
     public func pruneOlderThan(days: Int = 14) throws {
         let cutoff = Date().addingTimeInterval(-Double(days) * 24 * 3600).timeIntervalSince1970
+        let transitionCutoff = Date().addingTimeInterval(-180 * 24 * 3600).timeIntervalSince1970
         try queue.sync {
             try execLocked("DELETE FROM process_snapshots WHERE timestamp < ?", bind: { stmt in
                 sqlite3_bind_double(stmt, 1, cutoff)
             })
             try execLocked("DELETE FROM app_activations WHERE timestamp < ?", bind: { stmt in
                 sqlite3_bind_double(stmt, 1, cutoff)
+            })
+            try execLocked("DELETE FROM workspace_transitions WHERE timestamp < ?", bind: { stmt in
+                sqlite3_bind_double(stmt, 1, transitionCutoff)
             })
         }
     }
@@ -377,6 +440,18 @@ public final class LocalStore: @unchecked Sendable {
             action TEXT NOT NULL
         );
         """)
+        try execLocked("""
+        CREATE TABLE IF NOT EXISTS workspace_transitions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_id TEXT NOT NULL,
+            to_id TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            weekday INTEGER NOT NULL,
+            timestamp REAL NOT NULL
+        );
+        """)
+        try execLocked("CREATE INDEX IF NOT EXISTS idx_transitions_from_hour ON workspace_transitions(from_id, hour);")
+        try execLocked("CREATE INDEX IF NOT EXISTS idx_transitions_ts ON workspace_transitions(timestamp);")
     }
 
     private func execLocked(_ sql: String, bind: ((OpaquePointer) -> Void)? = nil) throws {
@@ -437,6 +512,11 @@ private func bindText(_ stmt: OpaquePointer, _ index: Int32, _ value: String?) {
 private func columnText(_ stmt: OpaquePointer, _ index: Int32) -> String? {
     guard let c = sqlite3_column_text(stmt, index) else { return nil }
     return String(cString: c)
+}
+
+private func uuidColumn(_ stmt: OpaquePointer, _ index: Int32) -> UUID? {
+    guard let text = columnText(stmt, index), !text.isEmpty else { return nil }
+    return UUID(uuidString: text)
 }
 
 public enum StoreError: Error, LocalizedError {

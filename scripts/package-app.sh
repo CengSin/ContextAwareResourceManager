@@ -13,5 +13,10 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 
+if [[ "${CI:-}" == "true" ]]; then
+  ditto -c -k --keepParent "$APP" "dist/ResourceSteward.app.zip"
+  echo "Zipped dist/ResourceSteward.app.zip"
+fi
+
 echo "Built $APP"
 echo "Launch with: open $APP"

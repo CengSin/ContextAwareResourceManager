@@ -61,8 +61,17 @@ struct MenuBarPanel: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(coordinator.match.displayName)
-                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 6) {
+                        if coordinator.settings.authorizationLevel == .sceneSwitch {
+                            Text("半自动")
+                                .font(.system(size: 9, weight: .bold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.accentColor.opacity(0.16), in: Capsule())
+                        }
+                        Text(coordinator.match.displayName)
+                            .font(.subheadline.weight(.semibold))
+                    }
                     Text(matchCaption)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -136,10 +145,16 @@ struct MenuBarPanel: View {
 
     private var gpuDetail: String {
         guard coordinator.hostGPU.available else { return "当前无法读取" }
+        let name = coordinator.hostGPU.displayName
         if coordinator.hostGPU.memoryTotalBytes > 0 {
-            return "\(coordinator.hostGPU.displayName)  \(ByteFormat.string(coordinator.hostGPU.memoryUsedBytes)) / \(ByteFormat.string(coordinator.hostGPU.memoryTotalBytes))"
+            let used = ByteFormat.string(coordinator.hostGPU.memoryUsedBytes)
+            let total = ByteFormat.string(coordinator.hostGPU.memoryTotalBytes)
+            if name.contains("Intel") {
+                return "\(name)  共享显存 \(used) / \(total)"
+            }
+            return "\(name)  显存 \(used) / \(total)"
         }
-        return coordinator.hostGPU.displayName
+        return "\(name)  引擎占用"
     }
 
     private var matchCaption: String {
@@ -148,6 +163,13 @@ struct MenuBarPanel: View {
                 return "先在「场景」里定义工作场景"
             }
             return String(format: "相似度 %.0f%%，低于阈值", coordinator.match.similarity * 100)
+        }
+        if let top = coordinator.forecasts.first, coordinator.forecastSampleCount >= 3, top.probability >= 0.2 {
+            return String(
+                format: "匹配 %.0f%% · 此时常切到「%@」",
+                coordinator.match.similarity * 100,
+                top.name
+            )
         }
         return String(format: "匹配 %.0f%% · %d 个近期 App", coordinator.match.similarity * 100, coordinator.match.activeBundleIDs.count)
     }
@@ -164,6 +186,12 @@ private struct ConfirmActionCard: View {
             Text("\(pending.group.displayName) · \(pending.group.members.count) 个进程")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            if pending.group.companionCount > 0 {
+                Text("Helper / Renderer 会随主应用一起处理，不会单独降级。单独处理它们会让开链接等功能失效。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(pending.action.confirmationDetail)
                 .font(.caption)
                 .foregroundStyle(.secondary)

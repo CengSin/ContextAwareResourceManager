@@ -12,6 +12,7 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
     public let memoryFootprintMB: Double
     public let cpuPercent: Double
     public let isForeground: Bool
+    public let isAccessory: Bool
     public let idleSeconds: TimeInterval
     public let startUnix: TimeInterval
 
@@ -25,6 +26,7 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
         memoryFootprintMB: Double,
         cpuPercent: Double,
         isForeground: Bool,
+        isAccessory: Bool = false,
         idleSeconds: TimeInterval,
         startUnix: TimeInterval = 0
     ) {
@@ -37,6 +39,7 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
         self.memoryFootprintMB = memoryFootprintMB
         self.cpuPercent = cpuPercent
         self.isForeground = isForeground
+        self.isAccessory = isAccessory
         self.idleSeconds = idleSeconds
         self.startUnix = startUnix
     }

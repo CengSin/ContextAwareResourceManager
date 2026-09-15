@@ -44,6 +44,7 @@ public enum UserFeedbackAction: String, Codable, Sendable {
     case accepted
     case rejected
     case manualOverride = "manual_override"
+    case autoSceneSwitch = "auto_scene_switch"
 }
 
 public enum AuthorizationLevel: Int, Codable, Sendable, CaseIterable, Identifiable {
@@ -64,13 +65,13 @@ public enum AuthorizationLevel: Int, Codable, Sendable, CaseIterable, Identifiab
     public var footnote: String {
         switch self {
         case .suggestOnly:
-            return "v1 默认。所有冻结/退出/降优先级都需要你点击确认。"
+            return "默认。所有冻结/退出/降优先级都需要你点击确认。"
         case .sceneSwitch:
-            return "v2 能力：切换工作场景时自动处理离场景应用。当前版本不可用。"
+            return "切换到已识别的工作场景并稳定约 15 秒后，自动降低优先级或冻结离场景应用。退出建议会改成冻结。VPN/代理（如 Shadowrocket）和菜单栏常驻工具不会自动处理。未分类不触发。"
         case .fullyAutomatic:
             return "v3 能力：完全自动处理。当前版本不可用，且默认关闭。"
         }
     }
 
-    public var isAvailableInV1: Bool { self == .suggestOnly }
+    public var isAvailable: Bool { self != .fullyAutomatic }
 }

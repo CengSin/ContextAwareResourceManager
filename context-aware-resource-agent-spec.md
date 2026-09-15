@@ -1,8 +1,8 @@
-# Mac 上下文感知资源管家 — 技术规格文档 v1.0
+# Mac 上下文感知资源管家 — 技术规格文档 v1.1
 
 ## 0. 文档目的
 
-本文档定义 v1（MVP）范围内的产品能力边界、系统架构、数据模型与核心算法，作为开发起点。所有涉及 macOS 权限/API 的判断已在设计讨论阶段做过验证，不在 v1 范围内重新调研可行性。
+本文档定义 v1（MVP）与 v2 范围内的产品能力边界、系统架构、数据模型与核心算法，作为开发依据。所有涉及 macOS 权限/API 的判断已在设计讨论阶段做过验证，不重新调研可行性。
 
 ---
 
@@ -202,6 +202,53 @@ func execute(action: SuggestedAction, pid: pid_t) {
 
 **重要**：`.freeze` 和 `.quit` 都不产生"内存被回收"的直接效果，UI 展示的"预计可释放"数值应标注为"预计"，并说明是系统后续自然回收的结果，不是本工具直接完成的。
 
+### 5.4 场景切换半自动（v2，授权 Level 1）
+
+触发条件（全部满足才自动处理）：
+
+1. 授权级别为 Level 1（`sceneSwitch`）
+2. 当前场景是已分类 workspace（未分类不触发任何自动处理，与 5.1 一致）
+3. 已确认的场景 ID 发生变化（启动后第一次匹配只采纳当前场景，不视为切换）
+4. 新场景连续保持默认 15 秒，避免 Jaccard 在阈值附近抖动
+
+处理范围：
+
+- **过滤器**：只处理 Reclaim Score 已给出建议（`suggestedAction != .none`）的离场景应用。刚在前台、分数不够的应用不会被盲冻。
+- **离场景**：不在新场景 `coreAppBundleIDs` 中、非前台、非保护、非黑名单。
+- **常驻网络**：VPN / 代理 / Packet Tunnel（Shadowrocket、Clash、Surge、WireGuard、Tailscale 等）视为 Keep-Alive，分数归零，半自动与手动都不冻结。菜单栏 accessory 应用也不会被半自动处理。
+- **动作降级**：Level 1 将 `.quit` 改成 `.freeze`，避免未保存窗口被自动关掉。`.throttle` / `.freeze` 按建议执行。
+- **恢复**：属于新场景核心 App 的已冻结进程会被 `SIGCONT` 恢复。
+- **Level 0**：仍记录切换（见 5.5），但不自动执行。
+- **Level 2**：v3 才开放；当前若被写入配置会回退到 Level 0。
+
+### 5.5 Markov 转移矩阵（v2）
+
+每次**确认后的**场景切换写入 `workspace_transitions`：`from_id`、`to_id`（空字符串表示未分类）、`hour`（0–23）、`weekday`（1–7）、`timestamp`。`from == to` 不记。原始记录保留 180 天。
+
+预测 `P(to | from, t)`：
+
+1. 优先用同一小时的样本；样本数 < 3 则回退到同一时段（夜 0–5 / 上午 6–11 / 下午 12–17 / 晚上 18–23）
+2. 仍不足则回退到该 `from` 的全天样本
+3. Laplace 平滑 α = 1；候选集 = 用户定义的其他场景 + 未分类（当 `from` 已分类时）
+
+v2 **只记录和展示**，不改变 Reclaim Score，也不用预测结果阻止或预热自动处理（那是 v2.5）。
+
+### 5.6 进程族（Helper / Renderer）
+
+Chrome、Edge、Brave、Electron 等应用会拆成主进程 + Helper / Renderer / GPU，它们有独立的 bundle ID（例如 `com.google.Chrome.helper.renderer`）。
+
+这些子进程几乎不会成为 NSWorkspace 前台应用，若按 PID 独立打分，空闲时间会被算成「从进程启动至今」，从而被单独降低优先级或冻结。那会打断主进程与子进程的 IPC，表现为开链接失败、页面无响应等。
+
+规则：
+
+- 以 `.helper` 为界把 bundle ID 收束到主应用（`….helper.renderer` → 主应用）
+- 列表按进程族合并，Helper 不单独占一行
+- 空闲、前台、场景归属继承主应用
+- 禁止只对 Helper / Renderer 执行 throttle / freeze / quit；要对就对整个应用一起做
+- 场景选择器不列出 Helper，避免用户把 Renderer 当成独立 App 加进场景
+
+Safari 的 `com.apple.WebKit.WebContent` 会被多个 App 共用，不并入 Safari，也不在本次范围内按族处理。
+
 ---
 
 ## 6. 权限与系统 API 清单
@@ -227,7 +274,8 @@ func execute(action: SuggestedAction, pid: pid_t) {
   - 列表：Top 进程，展示 score 及其分项（悬浮或点击展开，不是默认全展开）
   - 每项旁提供"应用建议"按钮（v1 默认不自动执行）
 - Workspace 管理页：用户手动创建/编辑 workspace，选择 core apps（从当前运行进程里勾选）
-- 设置页：授权级别开关（见 8.3 的 Level 0/1/2）
+- 设置页：授权级别开关。v2 开放 Level 0 / Level 1；Level 2 可见但不可选
+- 场景页：展示当前时段「接下来最常切到」的预测（样本不足时说明原因）
 
 ---
 
@@ -238,9 +286,9 @@ func execute(action: SuggestedAction, pid: pid_t) {
 - Workspace 用户手动定义，规则匹配识别当前场景
 - 授权 Level 0：仅建议，用户点击执行
 
-### 8.2 v2
-- Workspace 切换触发的半自动处理（授权 Level 1：切场景时自动处理离场景 App）
-- Markov 转移矩阵记录 workspace 切换概率（按时间维度）
+### 8.2 v2（本节已实现）
+- Workspace 切换触发的半自动处理（授权 Level 1：切场景稳定后自动处理离场景 App，quit 降级为 freeze）
+- Markov 转移矩阵记录 workspace 切换概率（按小时 / 时段 / 全天回退），仅展示不驱动打分
 
 ### 8.3 v2.5
 - 关联规则挖掘（类 Apriori），捕捉"打开 A 后大概率短时间内打开 B"的模式

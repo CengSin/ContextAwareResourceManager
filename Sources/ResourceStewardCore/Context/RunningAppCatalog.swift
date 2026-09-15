@@ -16,6 +16,7 @@ public enum WorkspaceAppEligibility: Sendable {
         guard let bundleID, !bundleID.isEmpty else { return false }
         if bundleID == "cc.resourcesteward.app" { return false }
         if name == "ResourceSteward" { return false }
+        if ProcessFamily.isCompanion(bundleID: bundleID, processName: name) { return false }
         if let activationPolicy, activationPolicy == 2 { return false }
         if let activationPolicy, activationPolicy == 0 || activationPolicy == 1 {
             return true
@@ -34,7 +35,12 @@ public enum RunningAppCatalog {
             let path = app.bundleURL?.path ?? app.executableURL?.path ?? ""
             let pid = app.processIdentifier
             let policy = Int(app.activationPolicy.rawValue)
-            let protected = ProtectedProcessPolicy.isProtected(pid: pid, bundleID: bundleID, processName: name)
+            let protected = ProtectedProcessPolicy.isProtected(
+                pid: pid,
+                bundleID: bundleID,
+                processName: name,
+                path: path
+            )
             guard WorkspaceAppEligibility.shouldList(
                 bundleID: bundleID,
                 name: name,
@@ -72,7 +78,8 @@ public enum RunningAppCatalog {
             let protected = ProtectedProcessPolicy.isProtected(
                 pid: snapshot.pid,
                 bundleID: bundleID,
-                processName: snapshot.processName
+                processName: snapshot.processName,
+                path: snapshot.path
             )
             guard WorkspaceAppEligibility.shouldList(
                 bundleID: bundleID,

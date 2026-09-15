@@ -104,6 +104,18 @@ enum StewardChecks {
         )
         check("protected launchd", launchd.isProtected && launchd.suggestedAction == .none)
 
+        let shadowrocket = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 888, uid: 501, bundleID: "com.liguangming.Shadowrocket", processName: "Shadowrocket",
+                memoryFootprintMB: 180, cpuPercent: 2, isForeground: false, idleSeconds: 20_000
+            ),
+            workspace: nil
+        )
+        check("shadowrocket keep-alive protected", shadowrocket.isProtected && shadowrocket.suggestedAction == .none)
+        check("shadowrocket detected by bundle", KeepAlivePolicy.isKeepAlive(bundleID: "com.liguangming.Shadowrocket", processName: "Shadowrocket"))
+        check("clashx detected by name", KeepAlivePolicy.isKeepAlive(bundleID: "com.example.foo", processName: "ClashX Pro"))
+        check("chrome is not keep-alive", !KeepAlivePolicy.isKeepAlive(bundleID: "com.google.Chrome", processName: "Google Chrome"))
+
         let blacklisted = ReclaimScorer.score(
             snapshot: ProcessSnapshot(
                 pid: 1234, uid: 501, bundleID: "com.example.fragile", processName: "Fragile",
@@ -113,6 +125,89 @@ enum StewardChecks {
             blacklist: ["com.example.fragile"]
         )
         check("blacklist zeroes", blacklisted.score == 0 && blacklisted.suggestedAction == .none)
+
+        check("chrome renderer roots to chrome", ProcessFamily.rootBundleID(from: "com.google.Chrome.helper.renderer") == "com.google.Chrome")
+        check("chrome gpu helper roots to chrome", ProcessFamily.rootBundleID(from: "com.google.Chrome.helper.gpu") == "com.google.Chrome")
+        check("electron helper roots to parent", ProcessFamily.rootBundleID(from: "com.figma.Desktop.helper") == "com.figma.Desktop")
+        check("plain app is its own root", ProcessFamily.rootBundleID(from: "com.apple.dt.Xcode") == "com.apple.dt.Xcode")
+        check("firefox plugincontainer alias", ProcessFamily.rootBundleID(from: "org.mozilla.plugincontainer") == "org.mozilla.firefox")
+        check("renderer is companion", ProcessFamily.isCompanion(bundleID: "com.google.Chrome.helper.renderer", processName: "Google Chrome Helper (Renderer)"))
+        check("chrome main is not companion", !ProcessFamily.isCompanion(bundleID: "com.google.Chrome", processName: "Google Chrome"))
+        check("identity keys include parent", ProcessFamily.identityKeys(bundleID: "com.google.Chrome.helper.renderer", processName: "Renderer").contains("com.google.Chrome"))
+
+        let chromeMainSnap = ProcessSnapshot(
+            pid: 10, uid: 501, bundleID: "com.google.Chrome", processName: "Google Chrome",
+            memoryFootprintMB: 400, cpuPercent: 1, isForeground: true, idleSeconds: 2
+        )
+        let chromeRendererSnap = ProcessSnapshot(
+            pid: 11, uid: 501, bundleID: "com.google.Chrome.helper.renderer",
+            processName: "Google Chrome Helper (Renderer)",
+            memoryFootprintMB: 1200, cpuPercent: 0, isForeground: false, idleSeconds: 8000
+        )
+        let familyGroups = AppCoordinator.grouped([
+            ProcessViewModel(snapshot: chromeMainSnap, score: ReclaimScorer.score(snapshot: chromeMainSnap, workspace: nil), appPath: nil),
+            ProcessViewModel(snapshot: chromeRendererSnap, score: ReclaimScorer.score(snapshot: chromeRendererSnap, workspace: nil), appPath: nil)
+        ])
+        check("chrome family grouped together", familyGroups.count == 1 && familyGroups[0].members.count == 2)
+        check("chrome family key is parent", familyGroups.first?.key == "com.google.Chrome")
+        check("chrome family counts companions", familyGroups.first?.companionCount == 1)
+
+        let helperInWorkspace = ReclaimScorer.score(
+            snapshot: chromeRendererSnap,
+            workspace: Workspace(name: "Web", coreAppBundleIDs: ["com.google.Chrome"])
+        )
+        check("helper inherits parent workspace", helperInWorkspace.isInCurrentWorkspace)
+
+        let helperForeground = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 12, uid: 501, bundleID: "com.google.Chrome.helper.renderer",
+                processName: "Google Chrome Helper (Renderer)",
+                memoryFootprintMB: 1200, cpuPercent: 0, isForeground: true, idleSeconds: 8000
+            ),
+            workspace: nil
+        )
+        check("foreground helper not suggested", helperForeground.score == 0 && helperForeground.suggestedAction == .none)
+
+        let refuseRenderer = ActionExecutor().execute(action: .throttle, snapshot: chromeRendererSnap)
+        check("refuses independent renderer throttle", !refuseRenderer.ok && refuseRenderer.message.contains("Helper"))
+        let refuseFreeze = ActionExecutor().execute(action: .freeze, snapshots: [chromeRendererSnap], groupBundleID: chromeRendererSnap.bundleID)
+        check("refuses independent renderer freeze", !refuseFreeze.ok)
+        check(
+            "family batch is not independent companion",
+            !ProcessFamily.isIndependentCompanionAction(snapshots: [chromeMainSnap, chromeRendererSnap])
+        )
+
+        func stubGroup(name: String, bundle: String, pid: Int32, memory: Double, score: Double, foreground: Bool = false) -> ProcessGroupViewModel {
+            let snapshot = ProcessSnapshot(
+                pid: pid, uid: 501, bundleID: bundle, processName: name,
+                memoryFootprintMB: memory, cpuPercent: 0, isForeground: foreground, idleSeconds: 60
+            )
+            let record = ReclaimScoreRecord(
+                pid: pid, bundleID: bundle, processName: name, score: score,
+                components: ScoreComponents(idleContribution: 0, memorySizeContribution: 0, restartabilityContribution: 0, workspacePenalty: 0, foregroundPenalty: 0),
+                suggestedAction: ReclaimScorer.suggestedAction(for: score),
+                estimatedReleaseMB: memory, isProtected: false, isInCurrentWorkspace: false
+            )
+            return ProcessGroupViewModel(
+                key: bundle,
+                members: [ProcessViewModel(snapshot: snapshot, score: record, appPath: nil)]
+            )
+        }
+        var crowded = (1...90).map { i in
+            stubGroup(name: "Idle\(i)", bundle: "dev.idle.\(i)", pid: Int32(1000 + i), memory: 12, score: 45)
+        }
+        crowded.append(stubGroup(name: "Google Chrome", bundle: "com.google.Chrome", pid: 10, memory: 2400, score: 0, foreground: true))
+        let listed = AppCoordinator.listed(crowded, limit: 80)
+        check("listed keeps foreground chrome", listed.contains(where: { $0.key == "com.google.Chrome" }))
+        check("listed respects limit", listed.count == 80)
+        var memoryCrowd = (1...90).map { i in
+            stubGroup(name: "Idle\(i)", bundle: "dev.idle.\(i)", pid: Int32(2000 + i), memory: 12, score: 50)
+        }
+        memoryCrowd.append(stubGroup(name: "Google Chrome", bundle: "com.google.Chrome", pid: 11, memory: 1800, score: 0))
+        check(
+            "listed keeps heavy chrome at score 0",
+            AppCoordinator.listed(memoryCrowd, limit: 80).contains(where: { $0.key == "com.google.Chrome" })
+        )
 
         let estimated = ReclaimScorer.estimatedReleaseMB(from: [
             ReclaimScoreRecord(
@@ -194,6 +289,9 @@ enum StewardChecks {
         let gpu = monitor.sampleGPU()
         check("live gpu sample available", gpu.available)
         check("live gpu percent in range", gpu.usagePercent >= 0 && gpu.usagePercent <= 100)
+        check("gpu median of one", abs(SystemMonitor.median([42]) - 42) < 0.0001)
+        check("gpu median rejects spike", abs(SystemMonitor.median([8, 9, 100, 10, 11]) - 10) < 0.0001)
+        check("gpu intel name", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "IntelAccelerator", available: true).displayName == "Intel GPU")
 
         check("accessory apps appear in workspace picker", WorkspaceAppEligibility.shouldList(
             bundleID: "com.orbstack.orbstack",
@@ -209,6 +307,14 @@ enum StewardChecks {
             path: "/Applications/Google Chrome.app",
             pid: 4243,
             activationPolicy: 0,
+            isProtected: false
+        ))
+        check("chrome renderer hidden from picker", !WorkspaceAppEligibility.shouldList(
+            bundleID: "com.google.Chrome.helper.renderer",
+            name: "Google Chrome Helper (Renderer)",
+            path: "/Applications/Google Chrome.app",
+            pid: 99,
+            activationPolicy: 1,
             isProtected: false
         ))
         check("prohibited apps stay hidden", !WorkspaceAppEligibility.shouldList(
@@ -290,6 +396,8 @@ enum StewardChecks {
         check("thaw sleep succeeds", thawResult.ok)
         sleeper.terminate()
         sleeper.waitUntilExit()
+
+        failures.append(contentsOf: try V2Checks.run())
 
         if failures.isEmpty {
             print("\nAll checks passed.")

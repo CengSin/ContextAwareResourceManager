@@ -8,12 +8,35 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 section("授权级别") {
-                    Text(AuthorizationLevel.suggestOnly.title)
-                        .font(.subheadline.weight(.medium))
-                    Text(AuthorizationLevel.suggestOnly.footnote)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("切场景半自动（Level 1）和完全自动（Level 2）属于后续版本，当前不会自动执行任何冻结或退出。")
+                    ForEach(AuthorizationLevel.allCases) { level in
+                        Button {
+                            guard level.isAvailable else { return }
+                            coordinator.settings.authorizationLevel = level
+                            coordinator.persistSettings()
+                        } label: {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: coordinator.settings.authorizationLevel == level
+                                      ? "largecircle.fill.circle"
+                                      : "circle")
+                                    .foregroundStyle(level.isAvailable ? Color.accentColor : Color.secondary)
+                                    .padding(.top, 1)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(level.title)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(level.isAvailable ? Color.primary : Color.secondary)
+                                    Text(level.footnote)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!level.isAvailable)
+                    }
+                    Text("半自动只会在场景切换时动手，而且只处理打分已经达到建议阈值的离场景应用。VPN/代理（Shadowrocket、Clash、Surge 等）和菜单栏常驻工具不会自动冻结。冻结后内存仍由系统自然回收。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -1,0 +1,64 @@
+name: Build and package
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks-and-package:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+          xcrun --show-sdk-version --sdk macosx
+
+      - name: Run StewardChecks
+        run: swift run StewardChecks
+
+      - name: Package ResourceSteward.app
+        run: ./scripts/package-app.sh
+
+      - name: Zip app bundle
+        run: |
+          ditto -c -k --keepParent dist/ResourceSteward.app dist/ResourceSteward.app.zip
+          ls -lh dist/
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ResourceSteward.app
+          path: dist/ResourceSteward.app.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: checks-and-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download app
+        uses: actions/download-artifact@v4
+        with:
+          name: ResourceSteward.app
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ResourceSteward.app.zip
+          generate_release_notes: true

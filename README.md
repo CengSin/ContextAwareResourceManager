@@ -10,8 +10,11 @@ macOS 菜单栏里的 **Context-aware resource manager**。
 
 - 菜单栏常驻，展示内存压力、RAM / Compressed / Swap、整机 CPU 与 GPU 占用
 - 按工作场景给进程打分（空闲、内存、可重启、是否属于当前场景、是否在前台）
+- Chrome 等应用的 Helper / Renderer 并入主应用，不会单独降级（单独处理会打断开链接等 IPC）
 - 建议动作：降低 CPU 优先级、冻结（`SIGSTOP`）、请求退出
-- v1 默认只建议，点「应用建议」并确认后才执行
+- 默认只建议，点「应用建议」并确认后才执行
+- 可在设置中开启 **切场景半自动（Level 1）**：切换到已识别场景并稳定约 15 秒后，自动降低优先级或冻结离场景应用；退出建议会改成冻结。未分类不触发。VPN/代理（Shadowrocket 等）和菜单栏常驻工具不会自动处理
+- 按当前时段记录场景切换习惯，并在「场景」页展示接下来最常去的场景（不据此改打分）
 - 退出管家**不会**自动解冻；冻结名单保存在本地，下次启动会按 PID 重新暂停
 - 全部数据留在本机 SQLite，无网络上传
 
@@ -22,7 +25,9 @@ macOS 菜单栏里的 **Context-aware resource manager**。
 | 展示 Memory Pressure / RAM / Swap / Compressed | 是 |
 | 展示 per-process 内存 / CPU | 是 |
 | 判断当前工作场景 | 是（规则匹配） |
-| 降低优先级 / 冻结 / 退出 | 是（需确认） |
+| 切场景半自动处理离场景 App | 是（设置里开启 Level 1） |
+| 按时间记录场景切换习惯 | 是（仅展示） |
+| 降低优先级 / 冻结 / 退出 | 是（默认需确认；Level 1 切场景时可自动冻结/降优先级） |
 | **直接压缩其他进程的内存页** | 否，永久不可行 |
 | 读取其他 App 的窗口内容或剪贴板 | 否 |
 
@@ -41,6 +46,8 @@ swift build -c release
 open dist/ResourceSteward.app
 ```
 
+每次 push 到 `main` 时，GitHub Actions 会在 macOS 上跑 StewardChecks 并打包 `ResourceSteward.app`。产物在对应 run 的 Artifacts 里，文件名是 `ResourceSteward.app.zip`。打 `v*` 标签（例如 `v1.1.0`）会把同一个 zip 挂到 GitHub Release。
+
 开发时也可以：
 
 ```bash
@@ -57,6 +64,7 @@ swift run ResourceSteward
 2. 管家用最近 N 分钟的前台 App 与场景核心 App 做 Jaccard 匹配。
 3. 在 **进程** 里查看建议，点「应用建议」并确认。
 4. 已冻结的进程出现在列表顶部，可随时恢复。
+5. 若要在切场景时自动处理离场景应用，到 **设置** 打开「切场景时半自动」。
 
 数据位置：`~/Library/Application Support/ResourceSteward/resource-steward.sqlite`
 

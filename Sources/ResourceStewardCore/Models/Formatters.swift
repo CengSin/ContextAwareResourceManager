@@ -106,6 +106,20 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
         members.contains(where: { $0.snapshot.isForeground })
     }
 
+    public var isAccessory: Bool {
+        members.contains(where: { $0.snapshot.isAccessory })
+    }
+
+    public var isKeepAlive: Bool {
+        members.contains {
+            KeepAlivePolicy.isKeepAlive(
+                bundleID: $0.snapshot.bundleID,
+                processName: $0.snapshot.processName,
+                path: $0.snapshot.path
+            )
+        }
+    }
+
     public var score: ReclaimScoreRecord {
         members.max(by: { $0.score.score < $1.score.score })?.score ?? primary.score
     }
@@ -120,7 +134,14 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
         return nil
     }
 
+    public var companionCount: Int {
+        members.filter {
+            ProcessFamily.isCompanion(bundleID: $0.snapshot.bundleID, processName: $0.snapshot.processName)
+        }.count
+    }
+
     public var effectiveSuggestion: SuggestedAction {
+        if isForeground { return .none }
         if appliedAction == .freeze { return .none }
         if appliedAction == .throttle && score.suggestedAction == .throttle { return .none }
         return score.suggestedAction

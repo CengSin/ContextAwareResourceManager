@@ -118,7 +118,13 @@ public enum ProtectedProcessPolicy: Sendable {
         "cc.resourcesteward.app"
     ]
 
-    public static func isProtected(pid: Int32, bundleID: String?, processName: String, selfPID: Int32 = ProcessInfo.processInfo.processIdentifier) -> Bool {
+    public static func isProtected(
+        pid: Int32,
+        bundleID: String?,
+        processName: String,
+        path: String = "",
+        selfPID: Int32 = ProcessInfo.processInfo.processIdentifier
+    ) -> Bool {
         if pid <= 1 || pid == selfPID {
             return true
         }
@@ -126,6 +132,9 @@ public enum ProtectedProcessPolicy: Sendable {
             return true
         }
         if let bundleID, bundleIDs.contains(bundleID) {
+            return true
+        }
+        if KeepAlivePolicy.isKeepAlive(bundleID: bundleID, processName: processName, path: path) {
             return true
         }
         return false

@@ -5,6 +5,8 @@ import ProcBridge
 public final class SystemMonitor: @unchecked Sendable {
     private let lock = NSLock()
     private var previousCPU: RSHostCPUTicks?
+    private var gpuWindow: [Double] = []
+    private let gpuWindowSize = 5
 
     public init() {}
 
@@ -89,13 +91,27 @@ public final class SystemMonitor: @unchecked Sendable {
     public func sampleGPU() -> HostGPU {
         var raw = RSHostGPU()
         guard rs_host_gpu(&raw) == 0 else { return .unavailable }
+        let instant = min(100, max(0, raw.device_percent))
+        lock.lock()
+        gpuWindow.append(instant)
+        if gpuWindow.count > gpuWindowSize {
+            gpuWindow.removeFirst()
+        }
+        let smoothed = Self.median(gpuWindow)
+        lock.unlock()
         return HostGPU(
-            usagePercent: raw.device_percent,
+            usagePercent: smoothed,
             memoryUsedBytes: raw.memory_used_bytes,
             memoryTotalBytes: raw.memory_total_bytes,
             name: stringFromCChar(raw.name),
             available: true
         )
+    }
+
+    public static func median(_ values: [Double]) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        return sorted[sorted.count / 2]
     }
 }
 

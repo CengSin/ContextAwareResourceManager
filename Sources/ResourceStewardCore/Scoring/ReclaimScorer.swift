@@ -21,16 +21,23 @@ public enum ReclaimScorer: Sendable {
         selfPID: Int32 = ProcessInfo.processInfo.processIdentifier
     ) -> ReclaimScoreRecord {
         let bundleID = snapshot.bundleID ?? ""
+        let familyID = ProcessFamily.rootBundleID(from: snapshot.bundleID) ?? bundleID
         let protected = ProtectedProcessPolicy.isProtected(
             pid: snapshot.pid,
             bundleID: snapshot.bundleID,
             processName: snapshot.processName,
+            path: snapshot.path,
             selfPID: selfPID
         )
-        let blacklisted = blacklist.contains(bundleID) || blacklist.contains(snapshot.processName)
+        let blacklisted = blacklist.contains(bundleID)
+            || blacklist.contains(familyID)
+            || blacklist.contains(snapshot.processName)
         let inWorkspace: Bool = {
             guard let workspace else { return false }
-            if let id = snapshot.bundleID, workspace.coreAppBundleIDs.contains(id) {
+            if !bundleID.isEmpty, workspace.coreAppBundleIDs.contains(bundleID) {
+                return true
+            }
+            if !familyID.isEmpty, workspace.coreAppBundleIDs.contains(familyID) {
                 return true
             }
             return false
@@ -38,7 +45,10 @@ public enum ReclaimScorer: Sendable {
 
         let idleN = normalize(snapshot.idleMinutes, cap: weights.idleCapMinutes)
         let memN = normalize(snapshot.memoryFootprintMB, cap: weights.memoryCapMB)
-        let restart = RestartabilityTable.bonus(bundleID: snapshot.bundleID, processName: snapshot.processName)
+        let restart = RestartabilityTable.bonus(
+            bundleID: familyID.isEmpty ? snapshot.bundleID : familyID,
+            processName: snapshot.processName
+        )
 
         // Spec: score is normalized to 0-100. Positive terms are scaled by (w1+w2+w3)
         // so the 85 quit threshold is reachable; penalties are then subtracted.

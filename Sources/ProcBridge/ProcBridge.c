@@ -178,11 +178,26 @@ static int rs_copy_u64(CFDictionaryRef dict, CFStringRef key, uint64_t *out) {
     if (!rs_copy_double(dict, key, &value)) {
         return 0;
     }
+    // Intel publishes some memory counters as wrapped signed 32-bit values.
+    // Never take abs(); that turns overflow into a plausible-looking size.
     if (value < 0) {
-        value = -value;
+        return 0;
     }
     *out = (uint64_t)value;
     return 1;
+}
+
+/// Instant engine occupancy. Prefer "Device Utilization %".
+/// Do not use "Device Utilization % at cur p-state": at a low p-state even
+/// scanout can read as 100%. "GPU Activity(%)" on Intel is often a sticky 0/100.
+static int rs_copy_gpu_util(CFDictionaryRef perf, double *out) {
+    if (rs_copy_double(perf, CFSTR("Device Utilization %"), out)) {
+        return 1;
+    }
+    if (rs_copy_double(perf, CFSTR("Renderer Utilization %"), out)) {
+        return 1;
+    }
+    return 0;
 }
 
 int rs_host_gpu(RSHostGPU *out) {
@@ -197,29 +212,32 @@ int rs_host_gpu(RSHostGPU *out) {
     }
 
     io_registry_entry_t entry = IO_OBJECT_NULL;
-    double best = -1;
+    uint64_t best_memory = 0;
+    int found = 0;
     while ((entry = IOIteratorNext(iterator)) != IO_OBJECT_NULL) {
         CFMutableDictionaryRef props = NULL;
         if (IORegistryEntryCreateCFProperties(entry, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS && props != NULL) {
             CFDictionaryRef perf = CFDictionaryGetValue(props, CFSTR("PerformanceStatistics"));
             if (perf != NULL && CFGetTypeID(perf) == CFDictionaryGetTypeID()) {
-                double util = -1;
-                if (!rs_copy_double(perf, CFSTR("Device Utilization %"), &util)) {
-                    if (!rs_copy_double(perf, CFSTR("GPU Activity(%)"), &util)) {
-                        if (!rs_copy_double(perf, CFSTR("Renderer Utilization %"), &util)) {
-                            rs_copy_double(perf, CFSTR("Device Utilization % at cur p-state"), &util);
-                        }
-                    }
+                double util = 0;
+                int has_util = rs_copy_gpu_util(perf, &util);
+                uint64_t used = 0;
+                uint64_t total = 0;
+                if (!rs_copy_u64(perf, CFSTR("gartUsedBytes"), &used)) {
+                    rs_copy_u64(perf, CFSTR("In use system memory"), &used);
                 }
-                if (util > best) {
-                    best = util;
+                if (!rs_copy_u64(perf, CFSTR("gartSizeBytes"), &total)) {
+                    rs_copy_u64(perf, CFSTR("Alloc system memory"), &total);
+                }
+                // Prefer the accelerator that actually owns a GART/VRAM window.
+                // Taking max(utilization) used to pick a busy compositor helper
+                // and show 100% while the real GPU was nearly idle.
+                if (has_util && (!found || total > best_memory)) {
+                    found = 1;
+                    best_memory = total;
                     out->device_percent = util;
-                    if (!rs_copy_u64(perf, CFSTR("gartUsedBytes"), &out->memory_used_bytes)) {
-                        rs_copy_u64(perf, CFSTR("In use system memory"), &out->memory_used_bytes);
-                    }
-                    if (!rs_copy_u64(perf, CFSTR("gartSizeBytes"), &out->memory_total_bytes)) {
-                        rs_copy_u64(perf, CFSTR("Alloc system memory"), &out->memory_total_bytes);
-                    }
+                    out->memory_used_bytes = used;
+                    out->memory_total_bytes = total;
                     io_name_t name;
                     if (IORegistryEntryGetName(entry, name) == KERN_SUCCESS) {
                         strncpy(out->name, name, sizeof(out->name) - 1);
@@ -231,5 +249,5 @@ int rs_host_gpu(RSHostGPU *out) {
         IOObjectRelease(entry);
     }
     IOObjectRelease(iterator);
-    return best >= 0 ? 0 : -1;
+    return found ? 0 : -1;
 }

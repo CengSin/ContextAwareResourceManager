@@ -33,6 +33,8 @@ public struct WorkspaceMatch: Sendable, Equatable {
 
     public var isUnclassified: Bool { workspace == nil }
 
+    public var workspaceID: UUID? { workspace?.id }
+
     public var displayName: String {
         workspace?.name ?? "未分类"
     }

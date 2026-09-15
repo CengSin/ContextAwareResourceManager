@@ -59,13 +59,21 @@ public final class ActionExecutor: @unchecked Sendable {
     }
 
     public func execute(action: SuggestedAction, snapshots: [ProcessSnapshot], groupBundleID: String?) -> ActionResult {
+        if action != .none, ProcessFamily.isIndependentCompanionAction(snapshots: snapshots) {
+            return ActionResult(
+                ok: false,
+                message: "不会单独处理 Helper / Renderer。它们必须随主应用一起处理，否则开链接等功能会失效。",
+                action: action,
+                pid: snapshots.first?.pid ?? 0
+            )
+        }
         if action == .quit {
             return quitGroup(snapshots: snapshots, bundleID: groupBundleID)
         }
         var okCount = 0
         var last = ActionResult(ok: false, message: "没有可处理的进程", action: action, pid: snapshots.first?.pid ?? 0)
         for snapshot in snapshots {
-            last = execute(action: action, snapshot: snapshot)
+            last = apply(action: action, snapshot: snapshot)
             if last.ok { okCount += 1 }
         }
         if okCount == 0 { return last }
@@ -83,6 +91,10 @@ public final class ActionExecutor: @unchecked Sendable {
     }
 
     public func execute(action: SuggestedAction, snapshot: ProcessSnapshot) -> ActionResult {
+        execute(action: action, snapshots: [snapshot], groupBundleID: snapshot.bundleID)
+    }
+
+    private func apply(action: SuggestedAction, snapshot: ProcessSnapshot) -> ActionResult {
         switch action {
         case .none:
             return ActionResult(ok: true, message: "无需处理", action: action, pid: snapshot.pid)
@@ -104,6 +116,17 @@ public final class ActionExecutor: @unchecked Sendable {
             return ActionResult(ok: true, message: "已恢复进程 \(pid)", action: .freeze, pid: pid)
         }
         return ActionResult(ok: false, message: result.message, action: .freeze, pid: pid)
+    }
+
+    public func unthrottle(pid: Int32) -> ActionResult {
+        let rc = setpriority(PRIO_PROCESS, UInt32(bitPattern: pid), 0)
+        if rc != 0 {
+            return ActionResult(ok: false, message: "恢复优先级失败：\(posixError())", action: .throttle, pid: pid)
+        }
+        lock.lock()
+        throttled.remove(pid)
+        lock.unlock()
+        return ActionResult(ok: true, message: "已恢复进程 \(pid) 的 CPU 优先级", action: .throttle, pid: pid)
     }
 
     public func thawAll() {
@@ -199,6 +222,9 @@ public final class ActionExecutor: @unchecked Sendable {
         var ids: [String] = []
         if let bundleID, !bundleID.isEmpty {
             ids.append(bundleID)
+            if let root = ProcessFamily.rootBundleID(from: bundleID), root != bundleID {
+                ids.append(root)
+            }
             if bundleID.lowercased().contains(".helper") {
                 ids.append(contentsOf: helperParentIDs(bundleID))
             }
@@ -227,7 +253,12 @@ public final class ActionExecutor: @unchecked Sendable {
     }
 
     private func denyIfUnsafe(_ snapshot: ProcessSnapshot) -> ActionResult? {
-        if ProtectedProcessPolicy.isProtected(pid: snapshot.pid, bundleID: snapshot.bundleID, processName: snapshot.processName) {
+        if ProtectedProcessPolicy.isProtected(
+            pid: snapshot.pid,
+            bundleID: snapshot.bundleID,
+            processName: snapshot.processName,
+            path: snapshot.path
+        ) {
             return ActionResult(ok: false, message: "该进程受保护，不会执行处理。", action: .none, pid: snapshot.pid)
         }
         if snapshot.uid != currentUID {

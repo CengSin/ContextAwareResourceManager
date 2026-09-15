@@ -41,14 +41,18 @@ public final class ContextCollector: @unchecked Sendable {
 
     public func idleSeconds(for bundleID: String?, processName: String, startUnix: TimeInterval, now: Date = Date()) -> TimeInterval {
         lock.lock()
-        let lastByBundle = bundleID.flatMap { lastForegroundAt[$0] }
-        let lastByName = lastForegroundAt[processName]
-        lock.unlock()
-        if let lastByBundle {
-            return max(0, now.timeIntervalSince(lastByBundle))
+        let keys = ProcessFamily.identityKeys(bundleID: bundleID, processName: processName)
+        var latest: Date?
+        for key in keys {
+            if let date = lastForegroundAt[key] {
+                if latest == nil || date > latest! {
+                    latest = date
+                }
+            }
         }
-        if let lastByName {
-            return max(0, now.timeIntervalSince(lastByName))
+        lock.unlock()
+        if let latest {
+            return max(0, now.timeIntervalSince(latest))
         }
         if startUnix > 0 {
             return max(0, now.timeIntervalSince1970 - startUnix)
@@ -59,8 +63,10 @@ public final class ContextCollector: @unchecked Sendable {
     public func isForeground(bundleID: String?, processName: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        if let bundleID, bundleID == lastForegroundBundleID {
-            return true
+        if let foreground = lastForegroundBundleID {
+            if bundleID == foreground { return true }
+            if let root = ProcessFamily.rootBundleID(from: bundleID), root == foreground { return true }
+            if let root = ProcessFamily.rootBundleID(from: foreground), root == bundleID { return true }
         }
         return processName == lastForegroundName
     }

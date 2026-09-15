@@ -152,6 +152,41 @@ public struct AppSettings: Codable, Sendable, Equatable {
     }
 
     public static let `default` = AppSettings()
+
+    enum CodingKeys: String, CodingKey {
+        case authorizationLevel
+        case weights
+        case matchingWindowMinutes
+        case matchingThreshold
+        case sampleIntervalSeconds
+        case hasCompletedOnboarding
+        case showOnlyActionable
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        authorizationLevel = try container.decodeIfPresent(AuthorizationLevel.self, forKey: .authorizationLevel) ?? .suggestOnly
+        if authorizationLevel == .fullyAutomatic {
+            authorizationLevel = .suggestOnly
+        }
+        weights = try container.decodeIfPresent(ScoreWeights.self, forKey: .weights) ?? .default
+        matchingWindowMinutes = try container.decodeIfPresent(Double.self, forKey: .matchingWindowMinutes) ?? 10
+        matchingThreshold = try container.decodeIfPresent(Double.self, forKey: .matchingThreshold) ?? 0.2
+        sampleIntervalSeconds = try container.decodeIfPresent(Double.self, forKey: .sampleIntervalSeconds) ?? 3
+        hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
+        showOnlyActionable = try container.decodeIfPresent(Bool.self, forKey: .showOnlyActionable) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(authorizationLevel, forKey: .authorizationLevel)
+        try container.encode(weights, forKey: .weights)
+        try container.encode(matchingWindowMinutes, forKey: .matchingWindowMinutes)
+        try container.encode(matchingThreshold, forKey: .matchingThreshold)
+        try container.encode(sampleIntervalSeconds, forKey: .sampleIntervalSeconds)
+        try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
+        try container.encode(showOnlyActionable, forKey: .showOnlyActionable)
+    }
 }
 
 public struct FrozenProcess: Sendable, Equatable, Identifiable {
