@@ -147,11 +147,13 @@ public final class AppCoordinator: ObservableObject {
             lastFrequencyUpdate = now
         }
 
+        executor.extraKeepAliveBundleIDs = settings.favoriteBundleIDs
         let records = ReclaimScorer.scoreAll(
             snapshots: snapshots,
             workspace: match.workspace,
             weights: settings.weights,
-            blacklist: blacklist
+            blacklist: blacklist,
+            favorites: settings.favoriteBundleIDs
         )
         let recordByPid = Dictionary(uniqueKeysWithValues: records.map { ($0.pid, $0) })
 
@@ -310,6 +312,49 @@ public final class AppCoordinator: ObservableObject {
         refresh()
     }
 
+    public func isFavorite(_ group: ProcessGroupViewModel) -> Bool {
+        KeepAlivePolicy.isUserListed(bundleID: group.primary.snapshot.bundleID, extras: settings.favoriteBundleIDs)
+            || KeepAlivePolicy.isUserListed(bundleID: group.key, extras: settings.favoriteBundleIDs)
+    }
+
+    public func isFavorite(bundleID: String) -> Bool {
+        KeepAlivePolicy.isUserListed(bundleID: bundleID, extras: settings.favoriteBundleIDs)
+    }
+
+    public func toggleFavorite(_ group: ProcessGroupViewModel) {
+        let bundleID = ProcessFamily.rootBundleID(from: group.primary.snapshot.bundleID)
+            ?? group.primary.snapshot.bundleID
+            ?? group.key
+        guard !bundleID.isEmpty, !bundleID.hasPrefix("pid:") else { return }
+        if isFavorite(bundleID: bundleID) {
+            removeFavorite(bundleID: bundleID)
+        } else {
+            addFavorite(bundleID: bundleID, name: group.displayName, path: group.appPath ?? "")
+        }
+    }
+
+    public func addFavorite(bundleID: String, name: String, path: String) {
+        let root = ProcessFamily.rootBundleID(from: bundleID) ?? bundleID
+        guard !root.isEmpty, !root.hasPrefix("pid:") else { return }
+        if KeepAlivePolicy.isKeepAlive(bundleID: root, processName: name, path: path) {
+            return
+        }
+        if settings.favoriteApps.contains(where: { $0.bundleID == root }) { return }
+        let display = runningApps.first(where: { $0.bundleID == root })?.name ?? name
+        let resolvedPath = runningApps.first(where: { $0.bundleID == root })?.path ?? path
+        settings.favoriteApps.append(FavoriteApp(bundleID: root, name: display, path: resolvedPath))
+        persistSettings()
+        thawFavoriteIfFrozen(bundleID: root)
+        refresh()
+    }
+
+    public func removeFavorite(bundleID: String) {
+        let root = ProcessFamily.rootBundleID(from: bundleID) ?? bundleID
+        settings.favoriteApps.removeAll { $0.bundleID == root || $0.bundleID == bundleID }
+        persistSettings()
+        refresh()
+    }
+
     public func ignoreAndBlacklist(_ group: ProcessGroupViewModel) {
         let banned = ProcessFamily.rootBundleID(from: group.primary.snapshot.bundleID)
             ?? group.score.bundleID
@@ -392,10 +437,21 @@ public final class AppCoordinator: ObservableObject {
     /// Container / VPN keep-alive processes must never stay SIGSTOP'd, even if an older
     /// build froze them. Resume and drop them from the freeze list on every sample.
     private func thawKeepAliveIfFrozen() {
+        let extras = settings.favoriteBundleIDs
         let stuck = executor.frozenProcesses.filter {
-            KeepAlivePolicy.isKeepAlive(bundleID: $0.bundleID, processName: $0.processName)
+            KeepAlivePolicy.shouldStayAlive(
+                bundleID: $0.bundleID,
+                processName: $0.processName,
+                extras: extras
+            )
         }
         for item in stuck {
+            _ = executor.thaw(pid: item.pid)
+        }
+    }
+
+    private func thawFavoriteIfFrozen(bundleID: String) {
+        for item in executor.frozenProcesses where KeepAlivePolicy.isUserListed(bundleID: item.bundleID, extras: [bundleID]) {
             _ = executor.thaw(pid: item.pid)
         }
     }
@@ -531,6 +587,7 @@ public final class AppCoordinator: ObservableObject {
 public enum PanelTab: String, CaseIterable, Identifiable, Sendable {
     case processes
     case workspaces
+    case favorites
     case settings
 
     public var id: String { rawValue }
@@ -539,6 +596,7 @@ public enum PanelTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .processes: return "进程"
         case .workspaces: return "场景"
+        case .favorites: return "常用"
         case .settings: return "设置"
         }
     }

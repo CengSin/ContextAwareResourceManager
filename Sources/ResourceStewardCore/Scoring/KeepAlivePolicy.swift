@@ -146,4 +146,25 @@ public enum KeepAlivePolicy: Sendable {
         let blob = ((bundleID ?? "") + " " + processName + " " + path).lowercased()
         return fragments.contains { blob.contains($0) }
     }
+
+    /// User-picked apps that must stay up in every workspace (MySQL GUI, IDE, etc.).
+    /// Matches the stored ID and its process-family root, so a Chrome favorite also covers Helpers.
+    public static func isUserListed(bundleID: String?, extras: Set<String>) -> Bool {
+        guard !extras.isEmpty else { return false }
+        if let bundleID, extras.contains(bundleID) { return true }
+        if let root = ProcessFamily.rootBundleID(from: bundleID), extras.contains(root) {
+            return true
+        }
+        return false
+    }
+
+    public static func shouldStayAlive(
+        bundleID: String?,
+        processName: String,
+        path: String = "",
+        extras: Set<String> = []
+    ) -> Bool {
+        isKeepAlive(bundleID: bundleID, processName: processName, path: path)
+            || isUserListed(bundleID: bundleID, extras: extras)
+    }
 }

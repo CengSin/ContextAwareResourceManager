@@ -120,6 +120,10 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
         }
     }
 
+    public func matchesFavorites(_ ids: Set<String>) -> Bool {
+        members.contains { KeepAlivePolicy.isUserListed(bundleID: $0.snapshot.bundleID, extras: ids) }
+    }
+
     public var score: ReclaimScoreRecord {
         members.max(by: { $0.score.score < $1.score.score })?.score ?? primary.score
     }

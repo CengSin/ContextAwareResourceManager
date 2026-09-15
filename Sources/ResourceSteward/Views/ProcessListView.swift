@@ -185,6 +185,12 @@ private struct ProcessGroupRow: View {
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(Color.purple.opacity(0.16), in: Capsule())
+                        } else if coordinator.isFavorite(group) {
+                            Text("常用")
+                                .font(.system(size: 9, weight: .semibold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.purple.opacity(0.16), in: Capsule())
                         }
                         if group.members.count > 1 {
                             Text(group.companionCount > 0
@@ -266,9 +272,16 @@ private struct ProcessGroupRow: View {
                                 coordinator.request(action, for: group)
                             }
                             .controlSize(.mini)
+                            .disabled(group.isForeground || group.isProtected)
                         }
                     }
                     Spacer()
+                    if canMarkFavorite {
+                        Button(coordinator.isFavorite(group) ? "取消常用" : "设为常用") {
+                            coordinator.toggleFavorite(group)
+                        }
+                        .controlSize(.mini)
+                    }
                     Button("不再建议") {
                         coordinator.ignoreAndBlacklist(group)
                     }
@@ -278,6 +291,14 @@ private struct ProcessGroupRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private var canMarkFavorite: Bool {
+        guard !group.isKeepAlive else { return false }
+        let bundleID = ProcessFamily.rootBundleID(from: group.primary.snapshot.bundleID)
+            ?? group.primary.snapshot.bundleID
+            ?? ""
+        return !bundleID.isEmpty && !bundleID.hasPrefix("pid:")
     }
 
     private var alternateActions: [SuggestedAction] {

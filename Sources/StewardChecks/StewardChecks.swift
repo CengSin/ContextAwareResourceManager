@@ -269,6 +269,70 @@ enum StewardChecks {
         let loadedSettings = store.loadSettings()
         check("settings persist", loadedSettings.matchingWindowMinutes == 15 && loadedSettings.weights.idle == 40)
 
+        var withFavorites = AppSettings()
+        withFavorites.favoriteApps = [FavoriteApp(bundleID: "com.sequel.ace", name: "Sequel Ace")]
+        try store.saveSettings(withFavorites)
+        let loadedFavorites = store.loadSettings()
+        check(
+            "favorites persist",
+            loadedFavorites.favoriteBundleIDs.contains("com.sequel.ace")
+                && loadedFavorites.favoriteApps.first?.name == "Sequel Ace"
+        )
+        let decodedLegacyFavorites = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"matchingWindowMinutes":11,"hasCompletedOnboarding":true}"#.utf8)
+        )
+        check("legacy settings have empty favorites", decodedLegacyFavorites.favoriteApps.isEmpty && decodedLegacyFavorites.matchingWindowMinutes == 11)
+
+        check(
+            "chrome helper matches chrome favorite",
+            KeepAlivePolicy.isUserListed(
+                bundleID: "com.google.Chrome.helper.renderer",
+                extras: ["com.google.Chrome"]
+            )
+        )
+        check(
+            "unrelated app is not user listed",
+            !KeepAlivePolicy.isUserListed(bundleID: "com.apple.Safari", extras: ["com.google.Chrome"])
+        )
+
+        let favoriteScore = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 4242, uid: 501, bundleID: "com.google.Chrome.helper.renderer", processName: "Chrome Helper",
+                memoryFootprintMB: 2000, cpuPercent: 4, isForeground: false, idleSeconds: 20_000
+            ),
+            workspace: nil,
+            favorites: ["com.google.Chrome"]
+        )
+        check("favorite helper score zero", favoriteScore.isProtected && favoriteScore.suggestedAction == .none)
+
+        let favoriteExecutor = ActionExecutor()
+        favoriteExecutor.extraKeepAliveBundleIDs = ["com.google.Chrome"]
+        let refuseFavorite = favoriteExecutor.execute(
+            action: .freeze,
+            snapshot: ProcessSnapshot(
+                pid: 4242, uid: getuid(), bundleID: "com.google.Chrome", processName: "Google Chrome",
+                memoryFootprintMB: 800, cpuPercent: 1, isForeground: false, idleSeconds: 5000
+            )
+        )
+        check("refuses to freeze user favorite", !refuseFavorite.ok)
+
+        check(
+            "favorite chrome still eligible for workspace picker",
+            WorkspaceAppEligibility.shouldList(
+                bundleID: "com.google.Chrome",
+                name: "Chrome",
+                path: "/Applications/Google Chrome.app",
+                pid: 4243,
+                activationPolicy: 0,
+                isProtected: ProtectedProcessPolicy.isProtected(
+                    pid: 4243,
+                    bundleID: "com.google.Chrome",
+                    processName: "Chrome"
+                )
+            )
+        )
+
         try store.insertSnapshots([
             ProcessSnapshot(
                 pid: 44, uid: 501, bundleID: "com.example.app", processName: "Example",

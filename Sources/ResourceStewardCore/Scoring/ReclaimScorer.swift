@@ -18,6 +18,7 @@ public enum ReclaimScorer: Sendable {
         workspace: Workspace?,
         weights: ScoreWeights = .default,
         blacklist: Set<String> = [],
+        favorites: Set<String> = [],
         selfPID: Int32 = ProcessInfo.processInfo.processIdentifier
     ) -> ReclaimScoreRecord {
         let bundleID = snapshot.bundleID ?? ""
@@ -32,6 +33,8 @@ public enum ReclaimScorer: Sendable {
         let blacklisted = blacklist.contains(bundleID)
             || blacklist.contains(familyID)
             || blacklist.contains(snapshot.processName)
+        let favorited = KeepAlivePolicy.isUserListed(bundleID: snapshot.bundleID, extras: favorites)
+            || KeepAlivePolicy.isUserListed(bundleID: familyID, extras: favorites)
         let inWorkspace: Bool = {
             guard let workspace else { return false }
             if !bundleID.isEmpty, workspace.coreAppBundleIDs.contains(bundleID) {
@@ -63,7 +66,7 @@ public enum ReclaimScorer: Sendable {
         var score = min(100, max(0, raw))
         var action = suggestedAction(for: score, weights: weights)
 
-        if protected || blacklisted || snapshot.isForeground {
+        if protected || blacklisted || favorited || snapshot.isForeground {
             score = 0
             action = .none
         }
@@ -86,7 +89,7 @@ public enum ReclaimScorer: Sendable {
             ),
             suggestedAction: action,
             estimatedReleaseMB: snapshot.memoryFootprintMB,
-            isProtected: protected || blacklisted,
+            isProtected: protected || blacklisted || favorited,
             isInCurrentWorkspace: inWorkspace
         )
     }
@@ -96,10 +99,11 @@ public enum ReclaimScorer: Sendable {
         workspace: Workspace?,
         weights: ScoreWeights = .default,
         blacklist: Set<String> = [],
+        favorites: Set<String> = [],
         selfPID: Int32 = ProcessInfo.processInfo.processIdentifier
     ) -> [ReclaimScoreRecord] {
         snapshots
-            .map { score(snapshot: $0, workspace: workspace, weights: weights, blacklist: blacklist, selfPID: selfPID) }
+            .map { score(snapshot: $0, workspace: workspace, weights: weights, blacklist: blacklist, favorites: favorites, selfPID: selfPID) }
             .sorted { $0.score > $1.score }
     }
 

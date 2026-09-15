@@ -22,6 +22,7 @@ public final class ActionExecutor: @unchecked Sendable {
     private var frozen: [Int32: FrozenProcess] = [:]
     private var throttled: Set<Int32> = []
     private let currentUID = getuid()
+    public var extraKeepAliveBundleIDs: Set<String> = []
 
     public init() {}
 
@@ -147,7 +148,11 @@ public final class ActionExecutor: @unchecked Sendable {
     public func restorePersisted(_ saved: [FrozenProcess]) -> [FrozenProcess] {
         var kept: [FrozenProcess] = []
         for item in saved {
-            if KeepAlivePolicy.isKeepAlive(bundleID: item.bundleID, processName: item.processName) {
+            if KeepAlivePolicy.shouldStayAlive(
+                bundleID: item.bundleID,
+                processName: item.processName,
+                extras: extraKeepAliveBundleIDs
+            ) {
                 _ = kill(item.pid, SIGCONT)
                 continue
             }
@@ -264,6 +269,9 @@ public final class ActionExecutor: @unchecked Sendable {
             path: snapshot.path
         ) {
             return ActionResult(ok: false, message: "该进程受保护，不会执行处理。", action: .none, pid: snapshot.pid)
+        }
+        if KeepAlivePolicy.isUserListed(bundleID: snapshot.bundleID, extras: extraKeepAliveBundleIDs) {
+            return ActionResult(ok: false, message: "这是常用应用，不会降低优先级、冻结或退出。", action: .none, pid: snapshot.pid)
         }
         if snapshot.uid != currentUID {
             return ActionResult(ok: false, message: "只能处理当前用户的进程。", action: .none, pid: snapshot.pid)

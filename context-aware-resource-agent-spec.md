@@ -217,6 +217,7 @@ func execute(action: SuggestedAction, pid: pid_t) {
 - **离场景**：不在新场景 `coreAppBundleIDs` 中、非前台、非保护、非黑名单。
 - **常驻网络**：VPN / 代理 / Packet Tunnel（Shadowrocket、Clash、Surge、WireGuard、Tailscale 等）视为 Keep-Alive，分数归零，半自动与手动都不冻结。菜单栏 accessory 应用也不会被半自动处理。
 - **常驻计算**：容器 / 虚拟机运行时（OrbStack 含 `vmgr`、Docker Desktop、Colima、Podman、UTM 等）同样 Keep-Alive。冻结它们会暂停 Linux VM，MySQL 等容器写入会失败。OrbStack 的 `dev.kdrag0n.MacVirt.vmgr` 并入主应用族，不单独打分。
+- **用户常用**：用户可在「常用」页勾选任意 App（跨场景保活）。分数归零，半自动与手动都不冻结；Helper 随主应用一起保护。与场景核心 App 不同：常用不依赖当前 workspace。
 - **半自动范围**：Level 1 只处理带 reverse-DNS bundle ID 的 App；`python` / `fontd` 这类进程名不会被切场景自动降级。
 - **动作降级**：Level 1 将 `.quit` 改成 `.freeze`，避免未保存窗口被自动关掉。`.throttle` / `.freeze` 按建议执行。
 - **恢复**：属于新场景核心 App 的已冻结进程会被 `SIGCONT` 恢复。

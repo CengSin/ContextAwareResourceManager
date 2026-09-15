@@ -124,6 +124,19 @@ public struct HostMemory: Sendable, Equatable {
     )
 }
 
+public struct FavoriteApp: Codable, Hashable, Identifiable, Sendable, Equatable {
+    public var id: String { bundleID }
+    public var bundleID: String
+    public var name: String
+    public var path: String
+
+    public init(bundleID: String, name: String, path: String = "") {
+        self.bundleID = bundleID
+        self.name = name
+        self.path = path
+    }
+}
+
 public struct AppSettings: Codable, Sendable, Equatable {
     public var authorizationLevel: AuthorizationLevel
     public var weights: ScoreWeights
@@ -132,6 +145,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var sampleIntervalSeconds: Double
     public var hasCompletedOnboarding: Bool
     public var showOnlyActionable: Bool
+    public var favoriteApps: [FavoriteApp]
 
     public init(
         authorizationLevel: AuthorizationLevel = .suggestOnly,
@@ -140,7 +154,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         matchingThreshold: Double = 0.2,
         sampleIntervalSeconds: Double = 3,
         hasCompletedOnboarding: Bool = false,
-        showOnlyActionable: Bool = false
+        showOnlyActionable: Bool = false,
+        favoriteApps: [FavoriteApp] = []
     ) {
         self.authorizationLevel = authorizationLevel
         self.weights = weights
@@ -149,9 +164,14 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.sampleIntervalSeconds = sampleIntervalSeconds
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.showOnlyActionable = showOnlyActionable
+        self.favoriteApps = favoriteApps
     }
 
     public static let `default` = AppSettings()
+
+    public var favoriteBundleIDs: Set<String> {
+        Set(favoriteApps.map(\.bundleID))
+    }
 
     enum CodingKeys: String, CodingKey {
         case authorizationLevel
@@ -161,6 +181,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         case sampleIntervalSeconds
         case hasCompletedOnboarding
         case showOnlyActionable
+        case favoriteApps
     }
 
     public init(from decoder: Decoder) throws {
@@ -175,6 +196,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         sampleIntervalSeconds = try container.decodeIfPresent(Double.self, forKey: .sampleIntervalSeconds) ?? 3
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         showOnlyActionable = try container.decodeIfPresent(Bool.self, forKey: .showOnlyActionable) ?? false
+        favoriteApps = try container.decodeIfPresent([FavoriteApp].self, forKey: .favoriteApps) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -186,6 +208,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         try container.encode(sampleIntervalSeconds, forKey: .sampleIntervalSeconds)
         try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
         try container.encode(showOnlyActionable, forKey: .showOnlyActionable)
+        try container.encode(favoriteApps, forKey: .favoriteApps)
     }
 }
 

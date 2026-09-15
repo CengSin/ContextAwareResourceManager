@@ -33,6 +33,8 @@ struct MenuBarPanel: View {
                     ProcessListView()
                 case .workspaces:
                     WorkspaceEditorView()
+                case .favorites:
+                    FavoriteAppsView()
                 case .settings:
                     SettingsView()
                 }

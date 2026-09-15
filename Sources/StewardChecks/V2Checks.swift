@@ -400,6 +400,29 @@ enum V2Checks {
         )
         check("skips python cli and orbstack vmgr", plan.outcome == .committedWithAuto && plan.actions.isEmpty)
 
+        let userFavorite = SceneSwitchTarget(
+            groupKey: "com.sequel.ace",
+            bundleID: "com.sequel.ace",
+            processName: "Sequel Ace",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: true,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false
+        )
+        var favoriteState = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
+        (favoriteState, plan) = SceneSwitchPolicy.evaluate(
+            state: favoriteState,
+            authorization: .sceneSwitch,
+            current: funMatch,
+            targets: [userFavorite],
+            frozen: [],
+            now: t0,
+            debounceSeconds: 0
+        )
+        check("skips user favorite apps", plan.outcome == .committedWithAuto && plan.actions.isEmpty)
+
         var flap = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
         (flap, plan) = SceneSwitchPolicy.evaluate(
             state: flap,
