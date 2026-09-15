@@ -49,7 +49,7 @@ struct FavoriteAppsView: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     Text("从正在运行的 App 添加")
                         .font(.caption.weight(.semibold))
                     TextField("筛选名称或 bundle ID", text: $appQuery)

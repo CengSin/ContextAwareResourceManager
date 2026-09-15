@@ -23,7 +23,6 @@ public final class AppCoordinator: ObservableObject {
     @Published public private(set) var forecasts: [WorkspaceForecast] = []
     @Published public private(set) var forecastSampleCount: Int = 0
     @Published public private(set) var forecastScope: MarkovTimeScope = .allDay
-    @Published public var selectedTab: PanelTab = .processes
     @Published public var pendingAction: PendingAction?
 
     public let store: LocalStore

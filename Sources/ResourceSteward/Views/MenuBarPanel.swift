@@ -3,6 +3,8 @@ import SwiftUI
 
 struct MenuBarPanel: View {
     @EnvironmentObject private var coordinator: AppCoordinator
+    @State private var selectedTab: PanelTab = .processes
+    @State private var visitedTabs: Set<PanelTab> = [.processes]
 
     var body: some View {
         ZStack {
@@ -27,19 +29,14 @@ struct MenuBarPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
-            Group {
-                switch coordinator.selectedTab {
-                case .processes:
-                    ProcessListView()
-                case .workspaces:
-                    WorkspaceEditorView()
-                case .favorites:
-                    FavoriteAppsView()
-                case .settings:
-                    SettingsView()
-                }
+            ZStack {
+                tabPane(.processes) { ProcessListView() }
+                tabPane(.workspaces) { WorkspaceEditorView() }
+                tabPane(.favorites) { FavoriteAppsView() }
+                tabPane(.settings) { SettingsView() }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(nil, value: selectedTab)
             Divider()
             footer
         }
@@ -111,7 +108,7 @@ struct MenuBarPanel: View {
 
     private var footer: some View {
         HStack {
-            Picker("", selection: $coordinator.selectedTab) {
+            Picker("", selection: tabSelection) {
                 ForEach(PanelTab.allCases) { tab in
                     Text(tab.title).tag(tab)
                 }
@@ -137,6 +134,32 @@ struct MenuBarPanel: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private var tabSelection: Binding<PanelTab> {
+        Binding(
+            get: { selectedTab },
+            set: { tab in
+                selectedTab = tab
+                guard !visitedTabs.contains(tab) else { return }
+                // Mount the destination tab on the next turn so the segmented
+                // control can paint before the new page is built.
+                Task { @MainActor in
+                    visitedTabs.insert(tab)
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func tabPane<Content: View>(_ tab: PanelTab, @ViewBuilder content: () -> Content) -> some View {
+        if visitedTabs.contains(tab) {
+            content()
+                .opacity(selectedTab == tab ? 1 : 0)
+                .allowsHitTesting(selectedTab == tab)
+                .accessibilityHidden(selectedTab != tab)
+                .zIndex(selectedTab == tab ? 1 : 0)
+        }
     }
 
     private var ramValue: String {

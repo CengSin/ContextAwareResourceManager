@@ -37,16 +37,37 @@ enum Theme {
     }
 }
 
+@MainActor
+enum AppIconCache {
+    private static var images: [String: NSImage] = [:]
+
+    static func cached(_ path: String) -> NSImage? {
+        images[path]
+    }
+
+    /// Yield first so tab highlighting can paint before `icon(forFile:)` hits disk.
+    static func load(_ path: String) async -> NSImage {
+        if let cached = images[path] { return cached }
+        await Task.yield()
+        if let cached = images[path] { return cached }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        icon.size = NSSize(width: 64, height: 64)
+        images[path] = icon
+        return icon
+    }
+}
+
 struct AppIconView: View {
     let path: String?
     var size: CGFloat = 22
+    @State private var image: NSImage?
 
     var body: some View {
         Group {
-            if let path, !path.isEmpty {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: path))
+            if let nsImage = image ?? path.flatMap(AppIconCache.cached) {
+                Image(nsImage: nsImage)
                     .resizable()
-                    .interpolation(.high)
+                    .interpolation(.medium)
             } else {
                 Image(systemName: "app.dashed")
                     .foregroundStyle(.secondary)
@@ -54,5 +75,13 @@ struct AppIconView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .task(id: path) {
+            guard let path, !path.isEmpty else {
+                image = nil
+                return
+            }
+            if image != nil || AppIconCache.cached(path) != nil { return }
+            image = await AppIconCache.load(path)
+        }
     }
 }

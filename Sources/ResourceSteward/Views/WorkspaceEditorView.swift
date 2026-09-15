@@ -64,7 +64,7 @@ struct WorkspaceEditorView: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     Text(editingID == nil ? "新建场景" : "编辑场景")
                         .font(.caption.weight(.semibold))
                     TextField("名称，例如 编程 / 娱乐 / 会议", text: $draftName)
