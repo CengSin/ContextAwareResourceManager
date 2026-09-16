@@ -151,7 +151,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         authorizationLevel: AuthorizationLevel = .suggestOnly,
         weights: ScoreWeights = .default,
         matchingWindowMinutes: Double = 10,
-        matchingThreshold: Double = 0.2,
+        matchingThreshold: Double = WorkspaceMatcher.defaultMinEvidence,
         sampleIntervalSeconds: Double = 3,
         hasCompletedOnboarding: Bool = false,
         showOnlyActionable: Bool = false,
@@ -192,7 +192,15 @@ public struct AppSettings: Codable, Sendable, Equatable {
         }
         weights = try container.decodeIfPresent(ScoreWeights.self, forKey: .weights) ?? .default
         matchingWindowMinutes = try container.decodeIfPresent(Double.self, forKey: .matchingWindowMinutes) ?? 10
-        matchingThreshold = try container.decodeIfPresent(Double.self, forKey: .matchingThreshold) ?? 0.2
+        if let storedThreshold = try container.decodeIfPresent(Double.self, forKey: .matchingThreshold) {
+            // 0.2 was the Jaccard default; evidence matching uses 0.6 so shared apps
+            // like Chrome cannot classify a scene by themselves.
+            matchingThreshold = abs(storedThreshold - 0.2) < 0.0001
+                ? WorkspaceMatcher.defaultMinEvidence
+                : storedThreshold
+        } else {
+            matchingThreshold = WorkspaceMatcher.defaultMinEvidence
+        }
         sampleIntervalSeconds = try container.decodeIfPresent(Double.self, forKey: .sampleIntervalSeconds) ?? 3
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         showOnlyActionable = try container.decodeIfPresent(Bool.self, forKey: .showOnlyActionable) ?? false

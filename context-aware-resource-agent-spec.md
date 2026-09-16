@@ -145,16 +145,25 @@ struct UserFeedback: Codable {
 
 ### 5.1 Workspace 识别
 
-采用滑动窗口 + Jaccard 相似度，纯规则、可解释、无需训练：
+采用滑动窗口 + **区分度证据**，纯规则、可解释、无需训练。不用 Jaccard：Jaccard 的分母包含场景核心 App 全集，办公场景常用软件一多、当场只用 WebStorm 等少数几个时分数会被压低；娱乐场景只有微信和 Chrome 时，开一个 Chrome 就能到 50%，真实办公会被判成娱乐。
 
 ```
-activeSet = 过去 N 分钟内曾处于前台的 App bundleID 集合（默认 N=10）
+active = 过去 N 分钟内曾处于前台的 App（按进程族收束到主应用，默认 N=10）
+df(a)  = 有多少个场景把 a 列为核心 App
+区分度(a) = 1 / df(a)          // 独有（如 WebStorm / IntelliJ）= 1.0；Chrome 若在两个场景 = 0.5
+新近度(a) = 0.5 ^ (距上次前台的分钟数 / 8)
 
-for each workspace in userDefinedWorkspaces:
-    similarity = |activeSet ∩ workspace.coreAppBundleIDs| 
-                 / |activeSet ∪ workspace.coreAppBundleIDs|
+证据(W) = Σ_{a ∈ active ∩ W.core} 区分度(a) × 新近度(a)
+          // 没用到的核心 App 不加也不减，办公清单长短不再参与计算
 
-currentWorkspace = argmax(similarity)，若最高相似度 < 阈值（默认 0.2）→ 判定为 "Unclassified"，不触发任何自动逻辑
+若当前已确认场景 sticky 的证据 > 0：
+  仅当挑战者证据 > sticky + 0.3 且独有命中数 ≥ sticky 时才切走
+  否则留在 sticky（短暂回微信不会把办公打成娱乐）
+
+判定：
+  若选中场景有独有 App 命中 → 采用该场景
+  否则若证据 < 0.6，或领先第二名不足 0.35 → Unclassified
+  只开 Chrome 这类共享 App → 未分类，不触发任何自动逻辑
 ```
 
 ### 5.2 Reclaim Score 公式
@@ -209,7 +218,7 @@ func execute(action: SuggestedAction, pid: pid_t) {
 1. 授权级别为 Level 1（`sceneSwitch`）
 2. 当前场景是已分类 workspace（未分类不触发任何自动处理，与 5.1 一致）
 3. 已确认的场景 ID 发生变化（启动后第一次匹配只采纳当前场景，不视为切换）
-4. 新场景连续保持默认 15 秒，避免 Jaccard 在阈值附近抖动
+4. 新场景连续保持默认 15 秒，避免证据分在阈值附近抖动
 
 处理范围：
 
@@ -276,7 +285,7 @@ Safari 的 `com.apple.WebKit.WebContent` 会被多个 App 共用，不并入 Saf
   - 顶部：Pressure / RAM / Compressed / Swap 数值
   - 列表：Top 进程，展示 score 及其分项（悬浮或点击展开，不是默认全展开）
   - 每项旁提供"应用建议"按钮（v1 默认不自动执行）
-- Workspace 管理页：用户手动创建/编辑 workspace，选择 core apps（从当前运行进程里勾选）
+- Workspace 管理页：用户手动创建/编辑 workspace，选择 core apps（从当前运行进程里勾选；办公场景典型是 JetBrains IDE + 终端，不必把一次用不到的软件都打开才能被识别）
 - 设置页：授权级别开关。v2 开放 Level 0 / Level 1；Level 2 可见但不可选
 - 场景页：展示当前时段「接下来最常切到」的预测（样本不足时说明原因）
 

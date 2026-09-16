@@ -16,47 +16,152 @@ enum StewardChecks {
             }
         }
 
-        check("jaccard identical", abs(WorkspaceMatcher.jaccard(["a", "b"], ["a", "b"]) - 1) < 0.0001)
-        check("jaccard disjoint", WorkspaceMatcher.jaccard(["a"], ["b"]) == 0)
-        check("jaccard partial", abs(WorkspaceMatcher.jaccard(["xcode", "terminal", "safari"], ["xcode", "terminal"]) - 2.0 / 3.0) < 0.0001)
-        check("jaccard empty", WorkspaceMatcher.jaccard([], []) == 0)
+        check("recency now is one", abs(WorkspaceMatcher.recency(minutesAgo: 0) - 1) < 0.0001)
+        check("recency half life is half", abs(WorkspaceMatcher.recency(minutesAgo: 8) - 0.5) < 0.0001)
 
-        let coding = Workspace(name: "Coding", coreAppBundleIDs: ["com.apple.dt.Xcode", "com.googlecode.iterm2"])
-        let fun = Workspace(name: "Fun", coreAppBundleIDs: ["com.apple.Music"])
-        let low = WorkspaceMatcher.match(
-            workspaces: [coding],
-            activations: [
-                AppActivation(bundleID: "com.apple.Safari", processName: "Safari"),
-                AppActivation(bundleID: "com.apple.Music", processName: "Music")
-            ],
-            threshold: 0.2
-        )
-        check("unclassified below threshold", low.isUnclassified && low.displayName == "未分类")
-
-        let high = WorkspaceMatcher.match(
-            workspaces: [coding, fun],
-            activations: [
-                AppActivation(bundleID: "com.apple.dt.Xcode", processName: "Xcode"),
-                AppActivation(bundleID: "com.googlecode.iterm2", processName: "iTerm")
+        let now = Date()
+        let office = Workspace(
+            name: "办公",
+            coreAppBundleIDs: [
+                "com.jetbrains.WebStorm",
+                "com.jetbrains.intellij",
+                "com.jetbrains.pycharm",
+                "com.jetbrains.goland",
+                "com.google.Chrome",
+                "com.tinyspeck.slackmacgap",
+                "com.googlecode.iterm2",
+                "com.figma.Desktop",
+                "com.docker.docker",
+                "md.obsidian"
             ]
         )
-        check("picks highest workspace", high.workspace?.name == "Coding" && high.similarity >= 0.2)
+        let fun = Workspace(
+            name: "娱乐",
+            coreAppBundleIDs: ["com.tencent.xinWeChat", "com.google.Chrome"]
+        )
+        func activation(_ bundle: String, name: String, minutesAgo: Double = 0) -> AppActivation {
+            AppActivation(
+                timestamp: now.addingTimeInterval(-minutesAgo * 60),
+                bundleID: bundle,
+                processName: name
+            )
+        }
+
+        let low = WorkspaceMatcher.match(
+            workspaces: [office],
+            activations: [
+                activation("com.apple.Music", name: "Music"),
+                activation("com.apple.Maps", name: "Maps")
+            ],
+            now: now
+        )
+        check("unclassified when nothing matches", low.isUnclassified && low.displayName == "未分类")
+
+        let high = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [
+                activation("com.jetbrains.WebStorm", name: "WebStorm"),
+                activation("com.googlecode.iterm2", name: "iTerm")
+            ],
+            now: now
+        )
+        check("picks office from jetbrains ide", high.workspace?.name == "办公" && high.similarity >= 1)
 
         check("empty workspaces unclassified", WorkspaceMatcher.match(
             workspaces: [],
-            activations: [AppActivation(bundleID: "com.apple.Safari", processName: "Safari")]
+            activations: [activation("com.apple.Safari", name: "Safari")],
+            now: now
         ).isUnclassified)
 
         let stale = WorkspaceMatcher.match(
-            workspaces: [coding],
-            activations: [AppActivation(
-                timestamp: Date().addingTimeInterval(-3600),
-                bundleID: "com.apple.dt.Xcode",
-                processName: "Xcode"
-            )],
+            workspaces: [office],
+            activations: [activation("com.jetbrains.WebStorm", name: "WebStorm", minutesAgo: 60)],
+            now: now,
             windowMinutes: 10
         )
         check("stale activations ignored", stale.isUnclassified && stale.activeBundleIDs.isEmpty)
+
+        let codingSubset = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [
+                activation("com.jetbrains.WebStorm", name: "WebStorm"),
+                activation("com.google.Chrome", name: "Google Chrome")
+            ],
+            now: now
+        )
+        check(
+            "few office apps still beat entertainment",
+            codingSubset.workspace?.name == "办公" && (codingSubset.scoresByWorkspaceID[office.id] ?? 0) > (codingSubset.scoresByWorkspaceID[fun.id] ?? 0)
+        )
+
+        let chromeOnly = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [activation("com.google.Chrome", name: "Google Chrome")],
+            now: now
+        )
+        check("chrome alone does not become entertainment", chromeOnly.isUnclassified)
+
+        let wechatOnly = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [activation("com.tencent.xinWeChat", name: "WeChat")],
+            now: now
+        )
+        check("wechat exclusive picks entertainment", wechatOnly.workspace?.name == "娱乐")
+
+        let wechatChrome = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [
+                activation("com.tencent.xinWeChat", name: "WeChat"),
+                activation("com.google.Chrome", name: "Google Chrome")
+            ],
+            now: now
+        )
+        check("wechat plus chrome picks entertainment", wechatChrome.workspace?.name == "娱乐")
+
+        let ideOnly = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [activation("com.jetbrains.intellij", name: "IntelliJ IDEA")],
+            now: now
+        )
+        check("intellij alone still office despite large core list", ideOnly.workspace?.name == "办公")
+
+        let webstormHelper = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [activation("com.jetbrains.WebStorm.helper.renderer", name: "WebStorm Helper")],
+            now: now
+        )
+        check("jetbrains helper roots to ide", webstormHelper.workspace?.name == "办公")
+
+        let stickyChrome = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [activation("com.google.Chrome", name: "Google Chrome")],
+            now: now,
+            stickyWorkspaceID: office.id
+        )
+        check("sticky office keeps chrome-only as office", stickyChrome.workspace?.name == "办公")
+
+        let switchToFun = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [
+                activation("com.jetbrains.WebStorm", name: "WebStorm", minutesAgo: 8),
+                activation("com.tencent.xinWeChat", name: "WeChat"),
+                activation("com.google.Chrome", name: "Google Chrome")
+            ],
+            now: now,
+            stickyWorkspaceID: office.id
+        )
+        check("strong entertainment evidence leaves office", switchToFun.workspace?.name == "娱乐")
+
+        let briefWechat = WorkspaceMatcher.match(
+            workspaces: [office, fun],
+            activations: [
+                activation("com.jetbrains.WebStorm", name: "WebStorm"),
+                activation("com.tencent.xinWeChat", name: "WeChat")
+            ],
+            now: now,
+            stickyWorkspaceID: office.id
+        )
+        check("brief wechat does not leave office", briefWechat.workspace?.name == "办公")
 
         check("normalize mid", abs(ReclaimScorer.normalize(60, cap: 120) - 0.5) < 0.0001)
         check("normalize cap", ReclaimScorer.normalize(240, cap: 120) == 1)
@@ -74,10 +179,10 @@ enum StewardChecks {
 
         let inWorkspace = ReclaimScorer.score(
             snapshot: ProcessSnapshot(
-                pid: 99, uid: 501, bundleID: "com.apple.dt.Xcode", processName: "Xcode",
+                pid: 99, uid: 501, bundleID: "com.jetbrains.WebStorm", processName: "WebStorm",
                 memoryFootprintMB: 6000, cpuPercent: 1, isForeground: false, idleSeconds: 8_000
             ),
-            workspace: Workspace(name: "Coding", coreAppBundleIDs: ["com.apple.dt.Xcode"])
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.WebStorm"])
         )
         check("workspace core not suggested", inWorkspace.score == 0 && inWorkspace.suggestedAction == .none && inWorkspace.isInCurrentWorkspace)
 
@@ -153,7 +258,11 @@ enum StewardChecks {
         check("chrome renderer roots to chrome", ProcessFamily.rootBundleID(from: "com.google.Chrome.helper.renderer") == "com.google.Chrome")
         check("chrome gpu helper roots to chrome", ProcessFamily.rootBundleID(from: "com.google.Chrome.helper.gpu") == "com.google.Chrome")
         check("electron helper roots to parent", ProcessFamily.rootBundleID(from: "com.figma.Desktop.helper") == "com.figma.Desktop")
-        check("plain app is its own root", ProcessFamily.rootBundleID(from: "com.apple.dt.Xcode") == "com.apple.dt.Xcode")
+        check("plain app is its own root", ProcessFamily.rootBundleID(from: "com.jetbrains.WebStorm") == "com.jetbrains.WebStorm")
+        check("webstorm helper roots to webstorm", ProcessFamily.rootBundleID(from: "com.jetbrains.WebStorm.helper.renderer") == "com.jetbrains.WebStorm")
+        check("pycharm ce still jetbrains", abs(RestartabilityTable.bonus(bundleID: "com.jetbrains.pycharm.ce", processName: "PyCharm") - 0.15) < 0.0001)
+        check("goland is hard to restart", abs(RestartabilityTable.bonus(bundleID: "com.jetbrains.goland", processName: "GoLand") - 0.15) < 0.0001)
+        check("jetbrains toolbox is milder", abs(RestartabilityTable.bonus(bundleID: "com.jetbrains.toolbox", processName: "JetBrains Toolbox") - 0.45) < 0.0001)
         check("firefox plugincontainer alias", ProcessFamily.rootBundleID(from: "org.mozilla.plugincontainer") == "org.mozilla.firefox")
         check("orbstack vmgr roots to orbstack", ProcessFamily.rootBundleID(from: "dev.kdrag0n.MacVirt.vmgr") == "dev.kdrag0n.MacVirt")
         check("orbstack scli roots to orbstack", ProcessFamily.rootBundleID(from: "dev.kdrag0n.MacVirt.scli") == "dev.kdrag0n.MacVirt")
@@ -281,7 +390,7 @@ enum StewardChecks {
         let store = try LocalStore(path: NSTemporaryDirectory() + "rs-check-\(UUID().uuidString).sqlite")
         let workspace = Workspace(
             name: "Coding",
-            coreAppBundleIDs: ["com.apple.dt.Xcode", "com.apple.Terminal"],
+            coreAppBundleIDs: ["com.jetbrains.WebStorm", "com.googlecode.iterm2"],
             observedAppFrequency: ["com.apple.Safari": 3]
         )
         try store.saveWorkspace(workspace)

@@ -10,7 +10,7 @@ struct WorkspaceEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("工作场景由你手动定义。管家用最近 \(Int(coordinator.settings.matchingWindowMinutes)) 分钟的前台 App 与核心 App 做 Jaccard 匹配；低于 \(thresholdPercent) 则视为未分类，不套用场景保护，也不触发半自动处理。")
+            Text("工作场景由你手动定义。管家看最近 \(Int(coordinator.settings.matchingWindowMinutes)) 分钟你真正用过的 App：JetBrains IDE 这类只属于一个场景的软件才能定性，Chrome 这类共享软件只是弱线索。没用到的核心 App 不会把工作场景的分数压下去。证据不足则视为未分类，不套用场景保护，也不触发半自动处理。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(14)
@@ -18,7 +18,7 @@ struct WorkspaceEditorView: View {
             forecastSection
 
             if coordinator.workspaces.isEmpty {
-                Text("还没有场景。从下面正在运行的 App 勾选核心应用，例如把 Xcode 和终端放进「编程」。")
+                Text("还没有场景。从下面正在运行的 App 勾选核心应用，例如把 WebStorm / IntelliJ 和终端放进「办公」。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
@@ -41,7 +41,7 @@ struct WorkspaceEditorView: View {
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                 if let score = coordinator.match.scoresByWorkspaceID[workspace.id] {
-                                    Text(String(format: "当前相似度 %.0f%%", score * 100))
+                                    Text(String(format: "当前证据 %.1f", score))
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
@@ -67,7 +67,7 @@ struct WorkspaceEditorView: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     Text(editingID == nil ? "新建场景" : "编辑场景")
                         .font(.caption.weight(.semibold))
-                    TextField("名称，例如 编程 / 娱乐 / 会议", text: $draftName)
+                    TextField("名称，例如 办公 / 娱乐 / 会议", text: $draftName)
                         .textFieldStyle(.roundedBorder)
 
                     Text("核心 App（前台与后台正在运行的都可勾选）")
@@ -120,10 +120,6 @@ struct WorkspaceEditorView: View {
                 .padding(.top, 10)
             }
         }
-    }
-
-    private var thresholdPercent: String {
-        String(format: "%.0f%%", coordinator.settings.matchingThreshold * 100)
     }
 
     @ViewBuilder

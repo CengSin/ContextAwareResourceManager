@@ -43,7 +43,10 @@ struct SettingsView: View {
 
                 section("场景匹配") {
                     sliderRow("时间窗口（分钟）", value: windowBinding, range: 3...30, format: "%.0f")
-                    sliderRow("未分类阈值", value: thresholdBinding, range: 0.05...0.6, format: "%.2f")
+                    sliderRow("最低证据（无独有 App 时）", value: thresholdBinding, range: 0.3...1.0, format: "%.2f")
+                    Text("只开了 Chrome 这类多个场景都有的软件时，低于此值保持未分类。WebStorm / IntelliJ 这类独有 App 不受这条限制。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     sliderRow("采样间隔（秒）", value: intervalBinding, range: 2...10, format: "%.0f")
                 }
 

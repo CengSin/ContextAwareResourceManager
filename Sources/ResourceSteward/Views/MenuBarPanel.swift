@@ -187,16 +187,16 @@ struct MenuBarPanel: View {
             if coordinator.workspaces.isEmpty {
                 return "先在「场景」里定义工作场景"
             }
-            return String(format: "相似度 %.0f%%，低于阈值", coordinator.match.similarity * 100)
+            return String(format: "证据 %.1f，不足以定性", coordinator.match.similarity)
         }
         if let top = coordinator.forecasts.first, coordinator.forecastSampleCount >= 3, top.probability >= 0.2 {
             return String(
-                format: "匹配 %.0f%% · 此时常切到「%@」",
-                coordinator.match.similarity * 100,
+                format: "证据 %.1f · 此时常切到「%@」",
+                coordinator.match.similarity,
                 top.name
             )
         }
-        return String(format: "匹配 %.0f%% · %d 个近期 App", coordinator.match.similarity * 100, coordinator.match.activeBundleIDs.count)
+        return String(format: "证据 %.1f · %d 个近期 App", coordinator.match.similarity, coordinator.match.activeBundleIDs.count)
     }
 }
 

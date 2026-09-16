@@ -29,6 +29,15 @@ public enum RestartabilityTable: Sendable {
         "com.apple.dt.Xcode": 0.15,
         "com.jetbrains.intellij": 0.15,
         "com.jetbrains.WebStorm": 0.15,
+        "com.jetbrains.pycharm": 0.15,
+        "com.jetbrains.goland": 0.15,
+        "com.jetbrains.CLion": 0.15,
+        "com.jetbrains.PhpStorm": 0.15,
+        "com.jetbrains.rider": 0.15,
+        "com.jetbrains.rubymine": 0.15,
+        "com.jetbrains.datagrip": 0.15,
+        "com.jetbrains.rustrover": 0.15,
+        "com.google.android.studio": 0.15,
         "com.todesktop.230313mzl4w4u92": 0.2, // Cursor
         "dev.warp.Warp-Stable": 0.35,
         "com.googlecode.iterm2": 0.35,
@@ -62,8 +71,18 @@ public enum RestartabilityTable: Sendable {
         ("discord", 0.75),
         ("code", 0.25),
         ("xcode", 0.15),
+        ("jetbrains", 0.15),
+        ("intellij", 0.15),
         ("idea", 0.15),
         ("webstorm", 0.15),
+        ("pycharm", 0.15),
+        ("goland", 0.15),
+        ("phpstorm", 0.15),
+        ("rubymine", 0.15),
+        ("datagrip", 0.15),
+        ("rustrover", 0.15),
+        ("android studio", 0.15),
+        ("clion", 0.15),
         ("cursor", 0.2),
         ("docker", 0.3),
         ("node", 0.55),
@@ -75,6 +94,13 @@ public enum RestartabilityTable: Sendable {
             return value
         }
         if let bundleID {
+            let id = bundleID.lowercased()
+            if id.hasPrefix("com.jetbrains.") {
+                return id.contains("toolbox") ? 0.45 : 0.15
+            }
+            if id.hasPrefix("com.google.android.studio") {
+                return 0.15
+            }
             for (key, value) in byBundleID where bundleID.hasPrefix(key) {
                 return value
             }

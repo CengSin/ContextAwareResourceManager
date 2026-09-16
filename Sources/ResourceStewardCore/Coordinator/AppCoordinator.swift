@@ -140,7 +140,8 @@ public final class AppCoordinator: ObservableObject {
             activations: activations,
             now: now,
             windowMinutes: settings.matchingWindowMinutes,
-            threshold: settings.matchingThreshold
+            threshold: settings.matchingThreshold,
+            stickyWorkspaceID: sceneState.committedWorkspaceID
         )
 
         if let current = match.workspace, now.timeIntervalSince(lastFrequencyUpdate) > 30 {

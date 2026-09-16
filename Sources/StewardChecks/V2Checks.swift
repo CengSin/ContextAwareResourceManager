@@ -13,7 +13,7 @@ enum V2Checks {
             }
         }
 
-        let coding = Workspace(name: "Coding", coreAppBundleIDs: ["com.apple.dt.Xcode", "com.googlecode.iterm2"])
+        let coding = Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.WebStorm", "com.googlecode.iterm2"])
         let fun = Workspace(name: "Fun", coreAppBundleIDs: ["com.apple.Music"])
         let meeting = Workspace(name: "Meeting", coreAppBundleIDs: ["com.apple.FaceTime"])
         let t0 = Date(timeIntervalSince1970: 1_700_000_000)
@@ -141,10 +141,10 @@ enum V2Checks {
             alreadyFrozen: false,
             alreadyThrottled: false
         )
-        let xcodeFrozen = FrozenProcess(
+        let ideFrozen = FrozenProcess(
             pid: 4242,
-            bundleID: "com.apple.dt.Xcode",
-            processName: "Xcode",
+            bundleID: "com.jetbrains.WebStorm",
+            processName: "WebStorm",
             action: .freeze
         )
         let musicFrozen = FrozenProcess(
@@ -173,7 +173,7 @@ enum V2Checks {
             authorization: .sceneSwitch,
             current: funMatch,
             targets: [chrome, music],
-            frozen: [xcodeFrozen, musicFrozen],
+            frozen: [ideFrozen, musicFrozen],
             now: t0.addingTimeInterval(1),
             debounceSeconds: 15
         )
@@ -184,7 +184,7 @@ enum V2Checks {
             authorization: .sceneSwitch,
             current: funMatch,
             targets: [chrome, music],
-            frozen: [xcodeFrozen, musicFrozen],
+            frozen: [ideFrozen, musicFrozen],
             now: t0.addingTimeInterval(10),
             debounceSeconds: 15
         )
@@ -195,7 +195,7 @@ enum V2Checks {
             authorization: .sceneSwitch,
             current: funMatch,
             targets: [chrome, music],
-            frozen: [xcodeFrozen, musicFrozen],
+            frozen: [ideFrozen, musicFrozen],
             now: t0.addingTimeInterval(16),
             debounceSeconds: 15
         )
@@ -211,7 +211,7 @@ enum V2Checks {
             authorization: .sceneSwitch,
             current: unclassified,
             targets: [chrome],
-            frozen: [xcodeFrozen],
+            frozen: [ideFrozen],
             now: t0.addingTimeInterval(17),
             debounceSeconds: 15
         )
@@ -221,7 +221,7 @@ enum V2Checks {
             authorization: .sceneSwitch,
             current: unclassified,
             targets: [chrome],
-            frozen: [xcodeFrozen],
+            frozen: [ideFrozen],
             now: t0.addingTimeInterval(33),
             debounceSeconds: 15
         )
@@ -469,6 +469,7 @@ enum V2Checks {
         """
         let decodedLegacy = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
         check("legacy settings default to level0", decodedLegacy.authorizationLevel == .suggestOnly && decodedLegacy.matchingWindowMinutes == 12)
+        check("legacy jaccard threshold migrates to evidence", abs(decodedLegacy.matchingThreshold - WorkspaceMatcher.defaultMinEvidence) < 0.0001)
 
         let forcedAuto = """
         {"authorizationLevel":2,"weights":{"idle":30,"memory":25,"restartability":15,"workspace":80,"foreground":999,"idleCapMinutes":120,"memoryCapMB":8192,"noneBelow":30,"throttleBelow":60,"freezeBelow":85},"matchingWindowMinutes":10,"matchingThreshold":0.2,"sampleIntervalSeconds":3,"hasCompletedOnboarding":true,"showOnlyActionable":false}
