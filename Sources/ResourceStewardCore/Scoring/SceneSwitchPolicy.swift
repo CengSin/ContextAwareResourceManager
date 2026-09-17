@@ -181,6 +181,11 @@ public enum SceneSwitchPolicy: Sendable {
               !target.ownsWindows,
               !target.isInCurrentWorkspace,
               target.idleSeconds >= minIdleSeconds,
+              !CategoryBanPolicy.bansAutoAction(
+                  bundleID: target.bundleID,
+                  processName: target.processName,
+                  path: target.path
+              ),
               UserFacingAppPolicy.isAutoEligible(
                   bundleID: target.bundleID,
                   processName: target.processName,

@@ -297,6 +297,156 @@ enum StewardChecks {
         )
         check("refuses to freeze orbstack vmgr", !refuseVmgr.ok)
 
+        check("tencent meeting is audio category", CategoryBanPolicy.match(bundleID: "com.tencent.meeting", processName: "TencentMeeting") == .audioMeetingScreen)
+        check("screen studio fragment", CategoryBanPolicy.match(bundleID: "app.macked.screenstudio", processName: "Screen Studio") == .audioMeetingScreen)
+        check("wechat is messaging", CategoryBanPolicy.match(bundleID: "com.tencent.xinWeChat", processName: "WeChat") == .instantMessaging)
+        check("lark fragment", CategoryBanPolicy.match(bundleID: "com.electron.lark", processName: "Lark") == .instantMessaging)
+        check("raycast is a11y", CategoryBanPolicy.match(bundleID: "com.raycast.macos", processName: "Raycast") == .accessibilityInputShell)
+        check("macs fan control is a11y", CategoryBanPolicy.match(bundleID: "com.crystalidea.macsfancontrol", processName: "Macs Fan Control") == .accessibilityInputShell)
+        check("squirrel ime fragment", CategoryBanPolicy.match(bundleID: "im.rime.inputmethod.Squirrel", processName: "Squirrel") == .accessibilityInputShell)
+        check("notes is apple windowed", CategoryBanPolicy.match(bundleID: "com.apple.Notes", processName: "Notes") == .appleWindowedUI)
+        check("safari is apple windowed", CategoryBanPolicy.match(bundleID: "com.apple.Safari", processName: "Safari") == .appleWindowedUI)
+        check("openusage is local monitor", CategoryBanPolicy.match(bundleID: "com.robinebers.openusage", processName: "OpenUsage") == .localMonitorSelf)
+        check("resource steward is local monitor", CategoryBanPolicy.match(bundleID: "cc.resourcesteward.app", processName: "ResourceSteward") == .localMonitorSelf)
+        check("vpn still keep-alive category", CategoryBanPolicy.match(bundleID: "com.liguangming.Shadowrocket", processName: "Shadowrocket") == .keepAlive)
+        check("orbstack still keep-alive category", CategoryBanPolicy.match(bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper") == .keepAlive)
+        check("chrome has no category ban", CategoryBanPolicy.match(bundleID: "com.google.Chrome", processName: "Google Chrome") == nil)
+        check("sublime has no category ban", CategoryBanPolicy.match(bundleID: "com.sublimetext.4", processName: "Sublime Text") == nil)
+
+        check("meeting bans throttle and freeze", !CategoryBanPolicy.allows(.throttle, bundleID: "com.tencent.meeting", processName: "TencentMeeting") && !CategoryBanPolicy.allows(.freeze, bundleID: "com.tencent.meeting", processName: "TencentMeeting"))
+        check("meeting does not suggest quit", !CategoryBanPolicy.allows(.quit, bundleID: "com.tencent.meeting", processName: "TencentMeeting"))
+        check("wechat bans freeze and throttle", !CategoryBanPolicy.allows(.freeze, bundleID: "com.tencent.xinWeChat", processName: "WeChat") && !CategoryBanPolicy.allows(.throttle, bundleID: "com.tencent.xinWeChat", processName: "WeChat"))
+        check("wechat may suggest quit", CategoryBanPolicy.allows(.quit, bundleID: "com.tencent.xinWeChat", processName: "WeChat"))
+        check("notes bans freeze only", !CategoryBanPolicy.allows(.freeze, bundleID: "com.apple.Notes", processName: "Notes") && CategoryBanPolicy.allows(.throttle, bundleID: "com.apple.Notes", processName: "Notes"))
+        check("chrome freeze still allowed", CategoryBanPolicy.allows(.freeze, bundleID: "com.google.Chrome", processName: "Google Chrome"))
+
+        let meetingScore = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 7101, uid: 501, bundleID: "com.tencent.meeting", processName: "TencentMeeting",
+                memoryFootprintMB: 1200, cpuPercent: 8, isForeground: false, idleSeconds: 20 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check("meeting score is not throttle or freeze", meetingScore.suggestedAction == .none)
+
+        let wechatScore = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 7102, uid: 501, bundleID: "com.tencent.xinWeChat", processName: "WeChat",
+                memoryFootprintMB: 900, cpuPercent: 1, isForeground: false, idleSeconds: 8 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check("wechat does not suggest freeze or throttle", wechatScore.suggestedAction == .none || wechatScore.suggestedAction == .quit)
+
+        let raycastScore = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 7103, uid: 501, bundleID: "com.raycast.macos", processName: "Raycast",
+                memoryFootprintMB: 400, cpuPercent: 2, isForeground: false, idleSeconds: 30 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check("raycast score is none", raycastScore.suggestedAction == .none)
+
+        let fanScore = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 7104, uid: 501, bundleID: "com.crystalidea.macsfancontrol", processName: "Macs Fan Control",
+                memoryFootprintMB: 80, cpuPercent: 1, isForeground: false, idleSeconds: 40 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check("macs fan control score is none", fanScore.suggestedAction == .none)
+
+        let notesScore = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 7105, uid: 501, bundleID: "com.apple.Notes", processName: "Notes",
+                memoryFootprintMB: 300, cpuPercent: 0, isForeground: false, idleSeconds: 10 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check("notes does not suggest freeze", notesScore.suggestedAction != .freeze)
+
+        let openUsageScore = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 7106, uid: 501, bundleID: "com.robinebers.openusage", processName: "OpenUsage",
+                memoryFootprintMB: 150, cpuPercent: 3, isForeground: false, idleSeconds: 50 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check("openusage score is none", openUsageScore.suggestedAction == .none)
+
+        let refuseMeeting = ActionExecutor()
+        refuseMeeting.isUnsafeToFreeze = { _, _ in false }
+        let refuseMeetingResult = refuseMeeting.execute(
+            action: .freeze,
+            snapshot: ProcessSnapshot(
+                pid: 910_001, uid: getuid(), bundleID: "com.tencent.meeting", processName: "TencentMeeting",
+                memoryFootprintMB: 800, cpuPercent: 2, isForeground: false, idleSeconds: 600
+            )
+        )
+        check("refuses to freeze tencent meeting", !refuseMeetingResult.ok && refuseMeetingResult.message.contains("音视频"))
+
+        let refuseWeChat = ActionExecutor()
+        refuseWeChat.isUnsafeToFreeze = { _, _ in false }
+        let refuseWeChatResult = refuseWeChat.execute(
+            action: .freeze,
+            snapshot: ProcessSnapshot(
+                pid: 910_002, uid: getuid(), bundleID: "com.tencent.xinWeChat", processName: "WeChat",
+                memoryFootprintMB: 600, cpuPercent: 1, isForeground: false, idleSeconds: 600
+            )
+        )
+        check("refuses to freeze wechat", !refuseWeChatResult.ok && refuseWeChatResult.message.contains("即时"))
+
+        let refuseWeChatThrottle = ActionExecutor().execute(
+            action: .throttle,
+            snapshot: ProcessSnapshot(
+                pid: 910_003, uid: getuid(), bundleID: "com.tencent.xinWeChat", processName: "WeChat",
+                memoryFootprintMB: 600, cpuPercent: 1, isForeground: false, idleSeconds: 600
+            )
+        )
+        check("refuses to throttle wechat", !refuseWeChatThrottle.ok && refuseWeChatThrottle.message.contains("即时"))
+
+        let refuseRaycast = ActionExecutor()
+        refuseRaycast.isUnsafeToFreeze = { _, _ in false }
+        let refuseRaycastResult = refuseRaycast.execute(
+            action: .freeze,
+            snapshot: ProcessSnapshot(
+                pid: 910_004, uid: getuid(), bundleID: "com.raycast.macos", processName: "Raycast",
+                memoryFootprintMB: 200, cpuPercent: 1, isForeground: false, idleSeconds: 600
+            )
+        )
+        check("refuses to freeze raycast", !refuseRaycastResult.ok && refuseRaycastResult.message.contains("辅助"))
+
+        let refuseFan = ActionExecutor().execute(
+            action: .throttle,
+            snapshot: ProcessSnapshot(
+                pid: 910_005, uid: getuid(), bundleID: "com.crystalidea.macsfancontrol", processName: "Macs Fan Control",
+                memoryFootprintMB: 80, cpuPercent: 1, isForeground: false, idleSeconds: 600
+            )
+        )
+        check("refuses to throttle macs fan control", !refuseFan.ok && refuseFan.message.contains("辅助"))
+
+        let refuseNotes = ActionExecutor()
+        refuseNotes.isUnsafeToFreeze = { _, _ in false }
+        let refuseNotesResult = refuseNotes.execute(
+            action: .freeze,
+            snapshot: ProcessSnapshot(
+                pid: 910_006, uid: getuid(), bundleID: "com.apple.Notes", processName: "Notes",
+                memoryFootprintMB: 140, cpuPercent: 0, isForeground: false, idleSeconds: 600
+            )
+        )
+        check("refuses to freeze notes even if headless", !refuseNotesResult.ok && refuseNotesResult.message.contains("系统自带"))
+
+        let refuseOpenUsage = ActionExecutor()
+        refuseOpenUsage.isUnsafeToFreeze = { _, _ in false }
+        let refuseOpenUsageResult = refuseOpenUsage.execute(
+            action: .freeze,
+            snapshot: ProcessSnapshot(
+                pid: 910_007, uid: getuid(), bundleID: "com.robinebers.openusage", processName: "OpenUsage",
+                memoryFootprintMB: 120, cpuPercent: 2, isForeground: false, idleSeconds: 600
+            )
+        )
+        check("refuses to freeze openusage", !refuseOpenUsageResult.ok && refuseOpenUsageResult.message.contains("监控"))
+
         let blacklisted = ReclaimScorer.score(
             snapshot: ProcessSnapshot(
                 pid: 1234, uid: 501, bundleID: "com.example.fragile", processName: "Fragile",

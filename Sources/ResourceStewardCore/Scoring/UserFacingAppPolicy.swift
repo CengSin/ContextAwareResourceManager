@@ -6,6 +6,7 @@ import Foundation
 /// Control Strip, and widget extensions were auto-throttled. Those actions never
 /// change what the user feels, and they crowd "只看建议".
 public enum UserFacingAppPolicy: Sendable {
+    /// CategoryBanPolicy.appleWindowedUI reuses this list and bans freeze for these apps.
     public static let appleUserBundleIDs: Set<String> = [
         "com.apple.safari",
         "com.apple.music",

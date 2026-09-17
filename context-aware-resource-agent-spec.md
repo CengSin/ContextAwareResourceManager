@@ -234,6 +234,16 @@ func execute(action: SuggestedAction, pid: pid_t) {
 - **有窗口不冻结**：进程当前拥有参与合成的 CG 窗口（layer < 24、面积 ≥ 2×2）时，半自动与手动都不 `SIGSTOP`。WindowServer 会向这些进程索要 surface；冻住它们会导致内置屏 `Display not ready`，userspace watchdog 杀掉 WindowServer、图形会话重启。窗口列表读不到或读不全时，对 regular App 按有窗口处理。退出（`terminate()`）仍允许。
 - **常驻网络**：VPN / 代理 / Packet Tunnel（Shadowrocket、Clash、Surge、WireGuard、Tailscale 等）视为 Keep-Alive，分数归零，半自动与手动都不冻结。菜单栏 accessory 应用也不会被半自动处理。
 - **常驻计算**：容器 / 虚拟机运行时（OrbStack 含 `vmgr`、Docker Desktop、Colima、Podman、UTM 等）同样 Keep-Alive。冻结它们会暂停 Linux VM，MySQL 等容器写入会失败。OrbStack 的 `dev.kdrag0n.MacVirt.vmgr` 并入主应用族，不单独打分。
+- **类别禁止（CategoryBanPolicy）**：用户不需要知道哪些 bundle 能冻。VPN/虚拟机名单仍只维护在 KeepAlivePolicy，类别层只组合。打分不会建议被禁动作；Action Executor 拒绝手动 `.throttle` / `.freeze`；Level 1 不对整类自动处理。有窗口的进程仍由 WindowedProcessPolicy 失败关闭，不因类别放宽。
+
+  | 类别 | banThrottle | banFreeze | allowSuggestQuit |
+  |---|---|---|---|
+  | `audioMeetingScreen` 腾讯会议 / Screen Studio / 剪映 / Music / FaceTime / QuickTime | 是 | 是 | 否 |
+  | `instantMessaging` 微信 / 企业微信 / Telegram / Lark / 信息 | 是 | 是 | 是（或 `.none`） |
+  | `accessibilityInputShell` Raycast / Rime / Macs Fan Control / Touch Bar 替代等 | 是 | 是 | 否 |
+  | `appleWindowedUI` `UserFacingAppPolicy.appleUserBundleIDs`（Notes 等） | 否 | 是 | 是 |
+  | `localMonitorSelf` OpenUsage / `cc.resourcesteward.app` | 是 | 是 | 否 |
+  | `keepAlive` 组合 KeepAlivePolicy | 是 | 是 | 否 |
 - **用户常用**：用户可在「常用」页勾选任意 App（跨场景保活）。分数归零，半自动与手动都不冻结；Helper 随主应用一起保护。与场景核心 App 不同：常用不依赖当前 workspace。
 - **半自动范围**：Level 1 只处理带 reverse-DNS bundle ID 的用户 App；`python` / `fontd` 这类进程名不会被自动冻结。
 - **动作降级**：Level 1 将 `.quit` 改成 `.freeze`，避免未保存窗口被自动关掉。

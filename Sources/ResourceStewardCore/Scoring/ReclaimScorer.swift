@@ -87,6 +87,13 @@ public enum ReclaimScorer: Sendable {
             action = .none
         }
 
+        action = CategoryBanPolicy.adjustedAction(
+            action,
+            bundleID: snapshot.bundleID,
+            processName: snapshot.processName,
+            path: snapshot.path
+        )
+
         return ReclaimScoreRecord(
             pid: snapshot.pid,
             bundleID: bundleID.isEmpty ? snapshot.processName : bundleID,

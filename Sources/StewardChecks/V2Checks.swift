@@ -536,6 +536,98 @@ enum V2Checks {
         )
         check("scene switch does not freeze windowed chrome", plan.outcome == .committedWithAuto && plan.actions.isEmpty)
 
+        let meetingTarget = SceneSwitchTarget(
+            groupKey: "com.tencent.meeting",
+            bundleID: "com.tencent.meeting",
+            processName: "TencentMeeting",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let wechatTarget = SceneSwitchTarget(
+            groupKey: "com.tencent.xinWeChat",
+            bundleID: "com.tencent.xinWeChat",
+            processName: "WeChat",
+            suggestedAction: .quit,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let raycastTarget = SceneSwitchTarget(
+            groupKey: "com.raycast.macos",
+            bundleID: "com.raycast.macos",
+            processName: "Raycast",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let notesAuto = SceneSwitchTarget(
+            groupKey: "com.apple.Notes",
+            bundleID: "com.apple.Notes",
+            processName: "Notes",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let openUsageTarget = SceneSwitchTarget(
+            groupKey: "com.robinebers.openusage",
+            bundleID: "com.robinebers.openusage",
+            processName: "OpenUsage",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let sublimeTarget = SceneSwitchTarget(
+            groupKey: "com.sublimetext.4",
+            bundleID: "com.sublimetext.4",
+            processName: "Sublime Text",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        check("meeting is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(meetingTarget))
+        check("wechat is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(wechatTarget))
+        check("raycast is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(raycastTarget))
+        check("notes is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(notesAuto))
+        check("openusage is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(openUsageTarget))
+        check("sublime remains auto candidate", SceneSwitchPolicy.isAutoCandidate(sublimeTarget))
+
+        var bannedState = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
+        (bannedState, plan) = SceneSwitchPolicy.evaluate(
+            state: bannedState,
+            authorization: .sceneSwitch,
+            current: funMatch,
+            targets: [meetingTarget, wechatTarget, raycastTarget, notesAuto, openUsageTarget, sublimeTarget],
+            frozen: [],
+            now: t0,
+            debounceSeconds: 0
+        )
+        check("level1 skips banned categories", !plan.actions.contains(where: { ["com.tencent.meeting", "com.tencent.xinWeChat", "com.raycast.macos", "com.apple.Notes", "com.robinebers.openusage"].contains($0.bundleID) }))
+        check("level1 still freezes eligible third-party", plan.actions.contains(where: { $0.bundleID == "com.sublimetext.4" && $0.action == .freeze }))
+
         let cooled = SceneSwitchPolicy.dwellActions(
             state: dwellState,
             authorization: .sceneSwitch,

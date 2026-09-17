@@ -80,6 +80,9 @@ public final class ActionExecutor: @unchecked Sendable {
                 pid: snapshots.first?.pid ?? 0
             )
         }
+        if let denied = denyIfCategoryBanned(action: action, snapshots: snapshots) {
+            return denied
+        }
         if action == .quit {
             return quitGroup(snapshots: snapshots, bundleID: groupBundleID)
         }
@@ -182,7 +185,12 @@ public final class ActionExecutor: @unchecked Sendable {
                 bundleID: item.bundleID,
                 processName: item.processName,
                 extras: extraKeepAliveBundleIDs
-            ) || isUnsafeToFreeze(item.pid, item.bundleID.isEmpty ? nil : item.bundleID) {
+            ) || isUnsafeToFreeze(item.pid, item.bundleID.isEmpty ? nil : item.bundleID)
+                || !CategoryBanPolicy.allows(
+                    .freeze,
+                    bundleID: item.bundleID.isEmpty ? nil : item.bundleID,
+                    processName: item.processName
+                ) {
                 _ = kill(item.pid, SIGCONT)
                 continue
             }
@@ -297,6 +305,29 @@ public final class ActionExecutor: @unchecked Sendable {
             if !id.isEmpty { results.append(id) }
         }
         return results
+    }
+
+    private func denyIfCategoryBanned(action: SuggestedAction, snapshots: [ProcessSnapshot]) -> ActionResult? {
+        guard action == .throttle || action == .freeze else { return nil }
+        for snapshot in snapshots {
+            guard let category = CategoryBanPolicy.match(
+                bundleID: snapshot.bundleID,
+                processName: snapshot.processName,
+                path: snapshot.path
+            ) else { continue }
+            if CategoryBanPolicy.allows(action, in: category) { continue }
+            return ActionResult(
+                ok: false,
+                message: CategoryBanPolicy.refusalMessage(
+                    processName: snapshot.processName,
+                    category: category,
+                    action: action
+                ),
+                action: action,
+                pid: snapshot.pid
+            )
+        }
+        return nil
     }
 
     private func denyIfUnsafe(_ snapshot: ProcessSnapshot) -> ActionResult? {

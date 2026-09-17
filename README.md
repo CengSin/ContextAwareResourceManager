@@ -15,6 +15,16 @@ macOS 菜单栏里的 **Context-aware resource manager**。
 - 默认只建议，点「应用建议」并确认后才执行
 - 可在 **常用** 里勾选跨场景保活的 App：任何场景都不会降低优先级、冻结或退出。VPN/代理、OrbStack / Docker 等已默认常驻
 - 可在设置中开启 **半自动（Level 1）**：识别到工作场景后，自动冻结空闲约 2 分钟以上、分数达到冻结阈值、且当前没有窗口的离场景应用；停留在同一场景时也会处理，不必等再切一次。有窗口的应用不会冻结（`SIGSTOP` 会卡住 WindowServer）。退出建议会改成冻结。降低优先级不再自动执行。系统守护进程和小组件不会处理。未分类不触发。VPN/代理（Shadowrocket 等）、容器/虚拟机（OrbStack、Docker 等）、菜单栏常驻工具和常用应用不会冻结；`python` 这类没有 App bundle 的进程也不会被半自动处理
+- 按类别禁止误伤（用户不必记 bundle ID）。VPN/虚拟机仍由 Keep-Alive 负责，不在这里重复名单：
+
+  | 类别 | 禁止降低优先级 | 禁止冻结 | 可建议退出 |
+  |---|---|---|---|
+  | 音视频会议/录屏（腾讯会议、Screen Studio、剪映、Music / FaceTime / QuickTime） | 是 | 是 | 否 |
+  | 即时通讯（微信、企业微信、Telegram、Lark/飞书、信息） | 是 | 是 | 是 |
+  | 输入法与辅助工具（Raycast、Rime/Squirrel、Macs Fan Control 等） | 是 | 是 | 否 |
+  | 系统自带应用（Notes、Safari 等 `UserFacingAppPolicy.appleUserBundleIDs`） | 否 | 是 | 是 |
+  | 本机监控（OpenUsage、场景资源管家自身） | 是 | 是 | 否 |
+  | 常驻网络/虚拟机（KeepAlivePolicy：Shadowrocket、OrbStack 等） | 是 | 是 | 否 |
 - 按当前时段记录场景切换习惯，并在「场景」页展示接下来最常去的场景（不据此改打分）
 - 从 Dock、Spotlight 或 Cmd-Tab 再打开已冻结的 App 时，会自动解冻（含它的 Helper）
 - 退出管家时自动解冻，并恢复已降低的优先级
