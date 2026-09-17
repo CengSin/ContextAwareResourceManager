@@ -247,6 +247,58 @@ enum StewardChecks {
         ])
         check("parse window owner", parsedWindow?.ownerPID == 24088 && parsedWindow?.participatesInCompositor == true)
 
+        let cachedExecutor = ActionExecutor()
+        cachedExecutor.windowOwnerPIDs = [24088]
+        cachedExecutor.reuseWindowOwnerPIDs = true
+        check(
+            "cached owner set marks windowed pid unsafe",
+            cachedExecutor.isUnsafeToFreeze(24088, "com.apple.Notes")
+        )
+        check(
+            "cached owner set marks other pid safe",
+            !cachedExecutor.isUnsafeToFreeze(9, nil)
+        )
+        cachedExecutor.windowOwnerPIDs = nil
+        check(
+            "cached nil owner set fails closed",
+            cachedExecutor.isUnsafeToFreeze(9, nil)
+        )
+        cachedExecutor.reuseWindowOwnerPIDs = false
+
+        let emptyPrevious: Set<Int32> = []
+        let frozenOnce = [
+            FrozenProcess(pid: 42, bundleID: "com.example.app", processName: "Example", action: .freeze)
+        ]
+        check(
+            "persist writes when signature changes",
+            FrozenPersistPolicy.shouldReplace(previous: emptyPrevious, current: frozenOnce)
+        )
+        check(
+            "persist skips when signature unchanged",
+            !FrozenPersistPolicy.shouldReplace(
+                previous: FrozenPersistPolicy.signature(frozenOnce),
+                current: frozenOnce
+            )
+        )
+        check(
+            "persist writes when pid leaves set",
+            FrozenPersistPolicy.shouldReplace(
+                previous: FrozenPersistPolicy.signature(frozenOnce),
+                current: []
+            )
+        )
+
+        check("default sample interval is 5s", abs(AppSettings.default.sampleIntervalSeconds - 5) < 0.001)
+        let decodedIntervalDefault = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"matchingWindowMinutes":10}"#.utf8)
+        )
+        check(
+            "missing sampleIntervalSeconds decodes to 5",
+            abs(decodedIntervalDefault.sampleIntervalSeconds - 5) < 0.001
+        )
+        check("gpu sample interval is 20s", abs(SystemMonitor.gpuSampleIntervalSeconds - 20) < 0.001)
+
         check("threshold none", ReclaimScorer.suggestedAction(for: 10) == .none)
         check("threshold throttle", ReclaimScorer.suggestedAction(for: 30) == .throttle)
         check("threshold freeze", ReclaimScorer.suggestedAction(for: 60) == .freeze)
@@ -730,6 +782,18 @@ enum StewardChecks {
         check("gpu median of one", abs(SystemMonitor.median([42]) - 42) < 0.0001)
         check("gpu median rejects spike", abs(SystemMonitor.median([8, 9, 100, 10, 11]) - 10) < 0.0001)
         check("gpu intel name", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "IntelAccelerator", available: true).displayName == "Intel GPU")
+
+        let gpuMonitor = SystemMonitor()
+        let t0 = Date()
+        _ = gpuMonitor.sampleGPU(now: t0, force: true)
+        let afterFirst = gpuMonitor.gpuHardwareSampleCount
+        _ = gpuMonitor.sampleGPU(now: t0.addingTimeInterval(1), force: false)
+        let afterCached = gpuMonitor.gpuHardwareSampleCount
+        _ = gpuMonitor.sampleGPU(now: t0.addingTimeInterval(SystemMonitor.gpuSampleIntervalSeconds + 1), force: false)
+        let afterInterval = gpuMonitor.gpuHardwareSampleCount
+        check("gpu first sample hits hardware", afterFirst >= 1)
+        check("gpu reuses sample within interval", afterCached == afterFirst)
+        check("gpu resamples after interval", afterInterval == afterFirst + 1)
 
         check("accessory apps appear in workspace picker", WorkspaceAppEligibility.shouldList(
             bundleID: "com.orbstack.orbstack",

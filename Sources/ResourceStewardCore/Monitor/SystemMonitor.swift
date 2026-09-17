@@ -3,10 +3,17 @@ import Foundation
 import ProcBridge
 
 public final class SystemMonitor: @unchecked Sendable {
+    /// How often to hit IOKit / `rs_host_gpu`. Between samples, `sampleGPU` reuses the last value.
+    public static let gpuSampleIntervalSeconds: TimeInterval = 20
+
     private let lock = NSLock()
     private var previousCPU: RSHostCPUTicks?
     private var gpuWindow: [Double] = []
     private let gpuWindowSize = 5
+    private var lastGPU: HostGPU = .unavailable
+    private var lastGPUSampleAt: Date = .distantPast
+    /// Counts hardware GPU samples (not cache hits). Useful for StewardChecks.
+    public private(set) var gpuHardwareSampleCount = 0
 
     public init() {}
 
@@ -88,9 +95,27 @@ public final class SystemMonitor: @unchecked Sendable {
         )
     }
 
-    public func sampleGPU() -> HostGPU {
+    public func sampleGPU(now: Date = Date(), force: Bool = false) -> HostGPU {
+        lock.lock()
+        if !force,
+           lastGPUSampleAt != .distantPast,
+           now.timeIntervalSince(lastGPUSampleAt) < Self.gpuSampleIntervalSeconds
+        {
+            let cached = lastGPU
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
         var raw = RSHostGPU()
-        guard rs_host_gpu(&raw) == 0 else { return .unavailable }
+        guard rs_host_gpu(&raw) == 0 else {
+            lock.lock()
+            lastGPU = .unavailable
+            lastGPUSampleAt = now
+            gpuHardwareSampleCount += 1
+            lock.unlock()
+            return .unavailable
+        }
         let instant = min(100, max(0, raw.device_percent))
         lock.lock()
         gpuWindow.append(instant)
@@ -98,14 +123,18 @@ public final class SystemMonitor: @unchecked Sendable {
             gpuWindow.removeFirst()
         }
         let smoothed = Self.median(gpuWindow)
-        lock.unlock()
-        return HostGPU(
+        let sampled = HostGPU(
             usagePercent: smoothed,
             memoryUsedBytes: raw.memory_used_bytes,
             memoryTotalBytes: raw.memory_total_bytes,
             name: stringFromCChar(raw.name),
             available: true
         )
+        lastGPU = sampled
+        lastGPUSampleAt = now
+        gpuHardwareSampleCount += 1
+        lock.unlock()
+        return sampled
     }
 
     public static func median(_ values: [Double]) -> Double {

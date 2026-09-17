@@ -41,6 +41,7 @@ public final class AppCoordinator: ObservableObject {
     private var sceneState = SceneSwitchState()
     private var transitionCache: [WorkspaceTransition] = []
     private var lastDwellActionAt: [String: Date] = [:]
+    private var lastPersistedFrozenSignature: Set<Int32> = []
 
     public init(store: LocalStore) {
         self.store = store
@@ -79,6 +80,7 @@ public final class AppCoordinator: ObservableObject {
     public func stop() {
         executor.thawAll()
         frozen = []
+        lastPersistedFrozenSignature = []
         try? store.replaceFrozen([])
         timer?.invalidate()
         timer = nil
@@ -96,7 +98,13 @@ public final class AppCoordinator: ObservableObject {
         let raw = monitor.sampleProcesses()
         let now = Date()
         let uid = getuid()
+        // One CGWindowList query per tick; reuse for ownsWindows + freeze safety + thaw.
         let windowOwnerPIDs = WindowedProcessPolicy.currentOwnerPIDs()
+        executor.windowOwnerPIDs = windowOwnerPIDs
+        executor.reuseWindowOwnerPIDs = true
+        defer {
+            executor.reuseWindowOwnerPIDs = false
+        }
 
         var snapshots: [ProcessSnapshot] = []
         snapshots.reserveCapacity(raw.count)
@@ -139,8 +147,7 @@ public final class AppCoordinator: ObservableObject {
 
         executor.prune(livePIDs: Set(snapshots.map(\.pid)))
         thawKeepAliveIfFrozen()
-        thawWindowedIfFrozen()
-        persistFrozen()
+        thawWindowedIfFrozen(ownerPIDs: windowOwnerPIDs)
 
         let windowStart = now.addingTimeInterval(-settings.matchingWindowMinutes * 60)
         var activations = store.loadActivations(since: windowStart)
@@ -447,6 +454,7 @@ public final class AppCoordinator: ObservableObject {
             }
         }
         try? store.replaceFrozen([])
+        lastPersistedFrozenSignature = []
         frozen = []
         if resumed > 0 {
             lastMessage = "上次未正常退出，已自动恢复 \(resumed) 个冻结进程。"
@@ -455,14 +463,30 @@ public final class AppCoordinator: ObservableObject {
     }
 
     private func persistFrozen() {
-        try? store.replaceFrozen(executor.frozenProcesses)
+        let items = executor.frozenProcesses
+        let signature = FrozenPersistPolicy.signature(items)
+        guard FrozenPersistPolicy.shouldReplace(
+            previous: lastPersistedFrozenSignature,
+            current: items
+        ) else { return }
+        lastPersistedFrozenSignature = signature
+        try? store.replaceFrozen(items)
     }
 
     /// SIGSTOP of an AppKit app with windows can hang WindowServer. Resume any that
     /// an older build froze, and drop them from the freeze list.
-    private func thawWindowedIfFrozen() {
-        let stuck = executor.frozenProcesses.filter {
-            executor.isUnsafeToFreeze($0.pid, $0.bundleID.isEmpty ? nil : $0.bundleID)
+    private func thawWindowedIfFrozen(ownerPIDs: Set<Int32>? = nil) {
+        let stuck = executor.frozenProcesses.filter { item in
+            let bundleID = item.bundleID.isEmpty ? nil : item.bundleID
+            if executor.reuseWindowOwnerPIDs || ownerPIDs != nil {
+                // Use the tick's owner set — never re-fetch CGWindowList per frozen pid.
+                return WindowedProcessPolicy.isUnsafeToFreeze(
+                    pid: item.pid,
+                    bundleID: bundleID,
+                    ownerPIDs: ownerPIDs ?? executor.windowOwnerPIDs
+                )
+            }
+            return executor.isUnsafeToFreeze(item.pid, bundleID)
         }
         for item in stuck {
             _ = executor.thaw(pid: item.pid)
