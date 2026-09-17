@@ -23,8 +23,36 @@ public final class ActionExecutor: @unchecked Sendable {
     private var throttled: Set<Int32> = []
     private let currentUID = getuid()
     public var extraKeepAliveBundleIDs: Set<String> = []
-    public var isUnsafeToFreeze: (Int32, String?) -> Bool = { pid, bundleID in
-        WindowedProcessPolicy.isUnsafeToFreeze(pid: pid, bundleID: bundleID)
+    /// Tick-scoped window-owner PID set from `AppCoordinator.refresh`.
+    /// When `reuseWindowOwnerPIDs` is true, freeze-safety uses this value as-is
+    /// (`nil` still means fail-closed) and does not call `CGWindowListCopyWindowInfo` again.
+    public var windowOwnerPIDs: Set<Int32>?
+    public var reuseWindowOwnerPIDs = false
+    private var isUnsafeToFreezeOverride: ((Int32, String?) -> Bool)?
+
+    public var isUnsafeToFreeze: (Int32, String?) -> Bool {
+        get {
+            if let isUnsafeToFreezeOverride {
+                return isUnsafeToFreezeOverride
+            }
+            return { [weak self] pid, bundleID in
+                guard let self else {
+                    return WindowedProcessPolicy.isUnsafeToFreeze(pid: pid, bundleID: bundleID)
+                }
+                let owners: Set<Int32>?
+                if self.reuseWindowOwnerPIDs {
+                    owners = self.windowOwnerPIDs
+                } else {
+                    owners = WindowedProcessPolicy.currentOwnerPIDs()
+                }
+                return WindowedProcessPolicy.isUnsafeToFreeze(
+                    pid: pid,
+                    bundleID: bundleID,
+                    ownerPIDs: owners
+                )
+            }
+        }
+        set { isUnsafeToFreezeOverride = newValue }
     }
 
     public init() {}

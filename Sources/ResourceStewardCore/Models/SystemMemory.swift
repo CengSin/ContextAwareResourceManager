@@ -154,7 +154,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         weights: ScoreWeights = .default,
         matchingWindowMinutes: Double = 10,
         matchingThreshold: Double = WorkspaceMatcher.defaultMinEvidence,
-        sampleIntervalSeconds: Double = 3,
+        sampleIntervalSeconds: Double = 5,
         hasCompletedOnboarding: Bool = false,
         showOnlyActionable: Bool = false,
         favoriteApps: [FavoriteApp] = [],
@@ -206,7 +206,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         } else {
             matchingThreshold = WorkspaceMatcher.defaultMinEvidence
         }
-        sampleIntervalSeconds = try container.decodeIfPresent(Double.self, forKey: .sampleIntervalSeconds) ?? 3
+        sampleIntervalSeconds = try container.decodeIfPresent(Double.self, forKey: .sampleIntervalSeconds) ?? 5
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         showOnlyActionable = try container.decodeIfPresent(Bool.self, forKey: .showOnlyActionable) ?? false
         favoriteApps = try container.decodeIfPresent([FavoriteApp].self, forKey: .favoriteApps) ?? []
@@ -254,5 +254,16 @@ public struct FrozenProcess: Sendable, Equatable, Identifiable {
         self.processName = processName
         self.frozenAt = frozenAt
         self.action = action
+    }
+}
+
+/// Avoid rewriting SQLite frozen rows when the frozen PID set is unchanged.
+public enum FrozenPersistPolicy: Sendable {
+    public static func signature(_ items: [FrozenProcess]) -> Set<Int32> {
+        Set(items.map(\.pid))
+    }
+
+    public static func shouldReplace(previous: Set<Int32>, current: [FrozenProcess]) -> Bool {
+        signature(current) != previous
     }
 }
