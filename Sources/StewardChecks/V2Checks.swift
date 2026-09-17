@@ -112,7 +112,7 @@ enum V2Checks {
 
         check("quit caps to freeze", SceneSwitchPolicy.autoAction(for: .quit) == .freeze)
         check("freeze stays freeze", SceneSwitchPolicy.autoAction(for: .freeze) == .freeze)
-        check("throttle stays throttle", SceneSwitchPolicy.autoAction(for: .throttle) == .throttle)
+        check("throttle is not auto applied", SceneSwitchPolicy.autoAction(for: .throttle) == nil)
         check("none is skipped", SceneSwitchPolicy.autoAction(for: .none) == nil)
 
         let codingMatch = WorkspaceMatch(workspace: coding, similarity: 0.8, activeBundleIDs: coding.coreAppBundleIDs)
@@ -128,7 +128,8 @@ enum V2Checks {
             isProtected: false,
             isInCurrentWorkspace: false,
             alreadyFrozen: false,
-            alreadyThrottled: false
+            alreadyThrottled: false,
+            idleSeconds: 180
         )
         let music = SceneSwitchTarget(
             groupKey: "com.apple.Music",
@@ -423,6 +424,251 @@ enum V2Checks {
         )
         check("skips user favorite apps", plan.outcome == .committedWithAuto && plan.actions.isEmpty)
 
+        let dwellChrome = SceneSwitchTarget(
+            groupKey: "com.google.Chrome",
+            bundleID: "com.google.Chrome",
+            processName: "Chrome",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let dwellRecent = SceneSwitchTarget(
+            groupKey: "com.apple.Safari",
+            bundleID: "com.apple.Safari",
+            processName: "Safari",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 30
+        )
+        let dwellThrottle = SceneSwitchTarget(
+            groupKey: "com.apple.Notes",
+            bundleID: "com.apple.Notes",
+            processName: "Notes",
+            suggestedAction: .throttle,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let dwellDaemon = SceneSwitchTarget(
+            groupKey: "com.apple.chronod",
+            bundleID: "com.apple.chronod",
+            processName: "chronod",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 8_000
+        )
+        let dwellState = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
+        let dwellPlan = SceneSwitchPolicy.dwellActions(
+            state: dwellState,
+            authorization: .sceneSwitch,
+            current: codingMatch,
+            targets: [dwellChrome, dwellRecent, dwellThrottle, dwellDaemon],
+            lastActionAt: [:],
+            now: t0
+        )
+        check("dwell freezes idle off-scene chrome", dwellPlan.contains(where: { $0.bundleID == "com.google.Chrome" && $0.action == .freeze }))
+        check("dwell skips recently used app", !dwellPlan.contains(where: { $0.bundleID == "com.apple.Safari" }))
+        check("dwell skips throttle-only suggestion", !dwellPlan.contains(where: { $0.bundleID == "com.apple.Notes" }))
+        check("dwell skips apple daemon", !dwellPlan.contains(where: { $0.bundleID == "com.apple.chronod" }))
+
+        let dwellWindowed = SceneSwitchTarget(
+            groupKey: "com.apple.Notes",
+            bundleID: "com.apple.Notes",
+            processName: "Notes",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            ownsWindows: true,
+            idleSeconds: 180
+        )
+        let windowedDwell = SceneSwitchPolicy.dwellActions(
+            state: dwellState,
+            authorization: .sceneSwitch,
+            current: codingMatch,
+            targets: [dwellWindowed, dwellChrome],
+            lastActionAt: [:],
+            now: t0
+        )
+        check("dwell skips windowed notes", !windowedDwell.contains(where: { $0.bundleID == "com.apple.Notes" }))
+        check("dwell still freezes headless chrome", windowedDwell.contains(where: { $0.bundleID == "com.google.Chrome" }))
+        check("windowed app is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(dwellWindowed))
+
+        var windowedState = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
+        let windowedChrome = SceneSwitchTarget(
+            groupKey: "com.google.Chrome",
+            bundleID: "com.google.Chrome",
+            processName: "Chrome",
+            suggestedAction: .quit,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            ownsWindows: true,
+            idleSeconds: 180
+        )
+        (windowedState, plan) = SceneSwitchPolicy.evaluate(
+            state: windowedState,
+            authorization: .sceneSwitch,
+            current: funMatch,
+            targets: [windowedChrome],
+            frozen: [],
+            now: t0,
+            debounceSeconds: 0
+        )
+        check("scene switch does not freeze windowed chrome", plan.outcome == .committedWithAuto && plan.actions.isEmpty)
+
+        let meetingTarget = SceneSwitchTarget(
+            groupKey: "com.tencent.meeting",
+            bundleID: "com.tencent.meeting",
+            processName: "TencentMeeting",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let wechatTarget = SceneSwitchTarget(
+            groupKey: "com.tencent.xinWeChat",
+            bundleID: "com.tencent.xinWeChat",
+            processName: "WeChat",
+            suggestedAction: .quit,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let raycastTarget = SceneSwitchTarget(
+            groupKey: "com.raycast.macos",
+            bundleID: "com.raycast.macos",
+            processName: "Raycast",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let notesAuto = SceneSwitchTarget(
+            groupKey: "com.apple.Notes",
+            bundleID: "com.apple.Notes",
+            processName: "Notes",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let openUsageTarget = SceneSwitchTarget(
+            groupKey: "com.robinebers.openusage",
+            bundleID: "com.robinebers.openusage",
+            processName: "OpenUsage",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        let sublimeTarget = SceneSwitchTarget(
+            groupKey: "com.sublimetext.4",
+            bundleID: "com.sublimetext.4",
+            processName: "Sublime Text",
+            suggestedAction: .freeze,
+            isForeground: false,
+            isProtected: false,
+            isInCurrentWorkspace: false,
+            alreadyFrozen: false,
+            alreadyThrottled: false,
+            idleSeconds: 180
+        )
+        check("meeting is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(meetingTarget))
+        check("wechat is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(wechatTarget))
+        check("raycast is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(raycastTarget))
+        check("notes is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(notesAuto))
+        check("openusage is not auto candidate", !SceneSwitchPolicy.isAutoCandidate(openUsageTarget))
+        check("sublime remains auto candidate", SceneSwitchPolicy.isAutoCandidate(sublimeTarget))
+
+        var bannedState = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
+        (bannedState, plan) = SceneSwitchPolicy.evaluate(
+            state: bannedState,
+            authorization: .sceneSwitch,
+            current: funMatch,
+            targets: [meetingTarget, wechatTarget, raycastTarget, notesAuto, openUsageTarget, sublimeTarget],
+            frozen: [],
+            now: t0,
+            debounceSeconds: 0
+        )
+        check("level1 skips banned categories", !plan.actions.contains(where: { ["com.tencent.meeting", "com.tencent.xinWeChat", "com.raycast.macos", "com.apple.Notes", "com.robinebers.openusage"].contains($0.bundleID) }))
+        check("level1 still freezes eligible third-party", plan.actions.contains(where: { $0.bundleID == "com.sublimetext.4" && $0.action == .freeze }))
+
+        let cooled = SceneSwitchPolicy.dwellActions(
+            state: dwellState,
+            authorization: .sceneSwitch,
+            current: codingMatch,
+            targets: [dwellChrome],
+            lastActionAt: ["com.google.Chrome": t0],
+            now: t0.addingTimeInterval(10)
+        )
+        check("dwell respects cooldown", cooled.isEmpty)
+
+        let unclassifiedDwell = SceneSwitchPolicy.dwellActions(
+            state: dwellState,
+            authorization: .sceneSwitch,
+            current: unclassified,
+            targets: [dwellChrome],
+            lastActionAt: [:],
+            now: t0
+        )
+        check("dwell skips unclassified", unclassifiedDwell.isEmpty)
+
+        let level0Dwell = SceneSwitchPolicy.dwellActions(
+            state: dwellState,
+            authorization: .suggestOnly,
+            current: codingMatch,
+            targets: [dwellChrome],
+            lastActionAt: [:],
+            now: t0
+        )
+        check("dwell skips level0", level0Dwell.isEmpty)
+
+        check(
+            "status text names workspace when idle",
+            SceneSwitchPolicy.statusText(
+                authorization: .sceneSwitch,
+                match: codingMatch,
+                isDebouncing: false,
+                frozenCount: 0,
+                pendingFreezeCount: 2
+            ).contains("办公")
+        )
+
         var flap = SceneSwitchState(sessionReady: true, committedWorkspaceID: coding.id)
         (flap, plan) = SceneSwitchPolicy.evaluate(
             state: flap,
@@ -470,6 +716,13 @@ enum V2Checks {
         let decodedLegacy = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
         check("legacy settings default to level0", decodedLegacy.authorizationLevel == .suggestOnly && decodedLegacy.matchingWindowMinutes == 12)
         check("legacy jaccard threshold migrates to evidence", abs(decodedLegacy.matchingThreshold - WorkspaceMatcher.defaultMinEvidence) < 0.0001)
+        check(
+            "legacy scoring caps migrate",
+            abs(decodedLegacy.weights.idleCapMinutes - 45) < 0.1
+                && abs(decodedLegacy.weights.memoryCapMB - 2048) < 0.1
+                && decodedLegacy.scoringRevision == 1
+                && abs(decodedLegacy.weights.offWorkspace - 28) < 0.1
+        )
 
         let forcedAuto = """
         {"authorizationLevel":2,"weights":{"idle":30,"memory":25,"restartability":15,"workspace":80,"foreground":999,"idleCapMinutes":120,"memoryCapMB":8192,"noneBelow":30,"throttleBelow":60,"freezeBelow":85},"matchingWindowMinutes":10,"matchingThreshold":0.2,"sampleIntervalSeconds":3,"hasCompletedOnboarding":true,"showOnlyActionable":false}

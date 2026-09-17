@@ -146,6 +146,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var hasCompletedOnboarding: Bool
     public var showOnlyActionable: Bool
     public var favoriteApps: [FavoriteApp]
+    /// Bumped when seed-user scoring defaults change. 1 = 45 min idle cap / 2 GB memory cap.
+    public var scoringRevision: Int
 
     public init(
         authorizationLevel: AuthorizationLevel = .suggestOnly,
@@ -155,7 +157,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         sampleIntervalSeconds: Double = 3,
         hasCompletedOnboarding: Bool = false,
         showOnlyActionable: Bool = false,
-        favoriteApps: [FavoriteApp] = []
+        favoriteApps: [FavoriteApp] = [],
+        scoringRevision: Int = 1
     ) {
         self.authorizationLevel = authorizationLevel
         self.weights = weights
@@ -165,6 +168,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.showOnlyActionable = showOnlyActionable
         self.favoriteApps = favoriteApps
+        self.scoringRevision = scoringRevision
     }
 
     public static let `default` = AppSettings()
@@ -182,6 +186,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         case hasCompletedOnboarding
         case showOnlyActionable
         case favoriteApps
+        case scoringRevision
     }
 
     public init(from decoder: Decoder) throws {
@@ -190,7 +195,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         if authorizationLevel == .fullyAutomatic {
             authorizationLevel = .suggestOnly
         }
-        weights = try container.decodeIfPresent(ScoreWeights.self, forKey: .weights) ?? .default
+        var decodedWeights = try container.decodeIfPresent(ScoreWeights.self, forKey: .weights) ?? .default
         matchingWindowMinutes = try container.decodeIfPresent(Double.self, forKey: .matchingWindowMinutes) ?? 10
         if let storedThreshold = try container.decodeIfPresent(Double.self, forKey: .matchingThreshold) {
             // 0.2 was the Jaccard default; evidence matching uses 0.6 so shared apps
@@ -205,6 +210,20 @@ public struct AppSettings: Codable, Sendable, Equatable {
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         showOnlyActionable = try container.decodeIfPresent(Bool.self, forKey: .showOnlyActionable) ?? false
         favoriteApps = try container.decodeIfPresent([FavoriteApp].self, forKey: .favoriteApps) ?? []
+        var revision = try container.decodeIfPresent(Int.self, forKey: .scoringRevision) ?? 0
+        if revision < 1 {
+            // Seed-user calibration: 120 min / 8 GB caps made freeze unreachable for
+            // typical idle browsers, so Level 1 only auto-throttled daemons.
+            if abs(decodedWeights.idleCapMinutes - 120) < 0.1 {
+                decodedWeights.idleCapMinutes = 45
+            }
+            if abs(decodedWeights.memoryCapMB - 8192) < 0.1 {
+                decodedWeights.memoryCapMB = 2048
+            }
+            revision = 1
+        }
+        weights = decodedWeights
+        scoringRevision = revision
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -217,6 +236,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
         try container.encode(showOnlyActionable, forKey: .showOnlyActionable)
         try container.encode(favoriteApps, forKey: .favoriteApps)
+        try container.encode(scoringRevision, forKey: .scoringRevision)
     }
 }
 

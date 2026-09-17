@@ -36,7 +36,7 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         .disabled(!level.isAvailable)
                     }
-                    Text("半自动只会在场景切换时动手，而且只处理打分已经达到建议阈值的离场景应用。VPN/代理、容器/虚拟机（OrbStack、Docker 等）、菜单栏常驻工具，以及你在「常用」里勾选的应用都不会冻结。冻结后内存仍由系统自然回收。")
+                    Text("半自动会在已识别的工作场景里持续处理：空闲约 2 分钟以上、分数达到冻结阈值、且当前没有窗口的离场景应用会被冻结。有窗口的应用（备忘录、浏览器等）不会冻结，否则会卡住屏幕。不必等再切一次场景。降低优先级不再自动执行（几乎无感）。系统守护进程和小组件不会处理。VPN/代理、容器/虚拟机（OrbStack、Docker 等）、菜单栏常驻工具，以及你在「常用」里勾选的应用都不会冻结。冻结后内存仍由系统自然回收。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -59,6 +59,9 @@ struct SettingsView: View {
                     sliderRow("可重启 w3", value: weightBinding(\.restartability), range: 0...50, format: "%.0f")
                     sliderRow("场景惩罚 w4", value: weightBinding(\.workspace), range: 0...120, format: "%.0f")
                     sliderRow("前台惩罚 w5", value: weightBinding(\.foreground), range: 100...999, format: "%.0f")
+                    sliderRow("离场景加分", value: weightBinding(\.offWorkspace), range: 0...50, format: "%.0f")
+                    sliderRow("空闲封顶（分钟）", value: weightBinding(\.idleCapMinutes), range: 15...120, format: "%.0f")
+                    sliderRow("内存封顶（MB）", value: weightBinding(\.memoryCapMB), range: 512...8192, format: "%.0f")
                     Button("恢复默认权重", action: coordinator.resetWeights)
                         .controlSize(.small)
                 }

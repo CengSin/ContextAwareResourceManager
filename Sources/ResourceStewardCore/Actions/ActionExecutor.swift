@@ -23,6 +23,9 @@ public final class ActionExecutor: @unchecked Sendable {
     private var throttled: Set<Int32> = []
     private let currentUID = getuid()
     public var extraKeepAliveBundleIDs: Set<String> = []
+    public var isUnsafeToFreeze: (Int32, String?) -> Bool = { pid, bundleID in
+        WindowedProcessPolicy.isUnsafeToFreeze(pid: pid, bundleID: bundleID)
+    }
 
     public init() {}
 
@@ -67,6 +70,18 @@ public final class ActionExecutor: @unchecked Sendable {
                 action: action,
                 pid: snapshots.first?.pid ?? 0
             )
+        }
+        if action == .freeze, snapshots.contains(where: { isUnsafeToFreeze($0.pid, $0.bundleID) }) {
+            let name = snapshots.first?.processName ?? "应用"
+            return ActionResult(
+                ok: false,
+                message: "\(name) 有窗口，冻结会卡住屏幕，已拒绝。",
+                action: .freeze,
+                pid: snapshots.first?.pid ?? 0
+            )
+        }
+        if let denied = denyIfCategoryBanned(action: action, snapshots: snapshots) {
+            return denied
         }
         if action == .quit {
             return quitGroup(snapshots: snapshots, bundleID: groupBundleID)
@@ -170,7 +185,12 @@ public final class ActionExecutor: @unchecked Sendable {
                 bundleID: item.bundleID,
                 processName: item.processName,
                 extras: extraKeepAliveBundleIDs
-            ) {
+            ) || isUnsafeToFreeze(item.pid, item.bundleID.isEmpty ? nil : item.bundleID)
+                || !CategoryBanPolicy.allows(
+                    .freeze,
+                    bundleID: item.bundleID.isEmpty ? nil : item.bundleID,
+                    processName: item.processName
+                ) {
                 _ = kill(item.pid, SIGCONT)
                 continue
             }
@@ -211,6 +231,14 @@ public final class ActionExecutor: @unchecked Sendable {
     private func freeze(_ snapshot: ProcessSnapshot) -> ActionResult {
         if isFrozen(pid: snapshot.pid) {
             return ActionResult(ok: true, message: "\(snapshot.processName) 已处于冻结状态", action: .freeze, pid: snapshot.pid)
+        }
+        if isUnsafeToFreeze(snapshot.pid, snapshot.bundleID) {
+            return ActionResult(
+                ok: false,
+                message: "\(snapshot.processName) 有窗口，冻结会卡住屏幕，已拒绝。",
+                action: .freeze,
+                pid: snapshot.pid
+            )
         }
         if let denied = denyIfUnsafe(snapshot) { return denied }
         let signal = sendSignal(pid: snapshot.pid, signal: SIGSTOP)
@@ -277,6 +305,29 @@ public final class ActionExecutor: @unchecked Sendable {
             if !id.isEmpty { results.append(id) }
         }
         return results
+    }
+
+    private func denyIfCategoryBanned(action: SuggestedAction, snapshots: [ProcessSnapshot]) -> ActionResult? {
+        guard action == .throttle || action == .freeze else { return nil }
+        for snapshot in snapshots {
+            guard let category = CategoryBanPolicy.match(
+                bundleID: snapshot.bundleID,
+                processName: snapshot.processName,
+                path: snapshot.path
+            ) else { continue }
+            if CategoryBanPolicy.allows(action, in: category) { continue }
+            return ActionResult(
+                ok: false,
+                message: CategoryBanPolicy.refusalMessage(
+                    processName: snapshot.processName,
+                    category: category,
+                    action: action
+                ),
+                action: action,
+                pid: snapshot.pid
+            )
+        }
+        return nil
     }
 
     private func denyIfUnsafe(_ snapshot: ProcessSnapshot) -> ActionResult? {

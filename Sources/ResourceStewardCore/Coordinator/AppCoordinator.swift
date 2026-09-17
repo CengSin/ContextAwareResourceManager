@@ -24,6 +24,7 @@ public final class AppCoordinator: ObservableObject {
     @Published public private(set) var forecastSampleCount: Int = 0
     @Published public private(set) var forecastScope: MarkovTimeScope = .allDay
     @Published public var pendingAction: PendingAction?
+    @Published public private(set) var autoStatusText: String = ""
 
     public let store: LocalStore
     public let executor = ActionExecutor()
@@ -39,6 +40,7 @@ public final class AppCoordinator: ObservableObject {
     private var lastFrequencyUpdate: Date = .distantPast
     private var sceneState = SceneSwitchState()
     private var transitionCache: [WorkspaceTransition] = []
+    private var lastDwellActionAt: [String: Date] = [:]
 
     public init(store: LocalStore) {
         self.store = store
@@ -64,6 +66,7 @@ public final class AppCoordinator: ObservableObject {
         collector.start()
         thawLeftoverFreezes()
         transitionCache = store.loadWorkspaceTransitions()
+        persistSettings()
         refresh()
         let interval = max(2, settings.sampleIntervalSeconds)
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
@@ -93,6 +96,7 @@ public final class AppCoordinator: ObservableObject {
         let raw = monitor.sampleProcesses()
         let now = Date()
         let uid = getuid()
+        let windowOwnerPIDs = WindowedProcessPolicy.currentOwnerPIDs()
 
         var snapshots: [ProcessSnapshot] = []
         snapshots.reserveCapacity(raw.count)
@@ -103,6 +107,7 @@ public final class AppCoordinator: ObservableObject {
             let name = running?.localizedName ?? sample.name
             let path = running?.bundleURL?.path ?? BundleIdentity.appPath(fromExecutable: sample.path) ?? sample.path
             let cpu = cpuPercent(pid: sample.pid, cpuTimeNs: sample.cpuTimeNs, now: now)
+            let isRegularApp = running?.activationPolicy == .regular
             let snapshot = ProcessSnapshot(
                 timestamp: now,
                 pid: sample.pid,
@@ -114,6 +119,12 @@ public final class AppCoordinator: ObservableObject {
                 cpuPercent: cpu,
                 isForeground: collector.isForeground(bundleID: bundleID, processName: name),
                 isAccessory: running?.activationPolicy == .accessory,
+                isRegularApp: isRegularApp,
+                ownsWindows: WindowedProcessPolicy.snapshotOwnsWindows(
+                    pid: sample.pid,
+                    isRegularApp: isRegularApp,
+                    ownerPIDs: windowOwnerPIDs
+                ),
                 idleSeconds: collector.idleSeconds(
                     for: bundleID,
                     processName: name,
@@ -128,6 +139,7 @@ public final class AppCoordinator: ObservableObject {
 
         executor.prune(livePIDs: Set(snapshots.map(\.pid)))
         thawKeepAliveIfFrozen()
+        thawWindowedIfFrozen()
         persistFrozen()
 
         let windowStart = now.addingTimeInterval(-settings.matchingWindowMinutes * 60)
@@ -205,6 +217,16 @@ public final class AppCoordinator: ObservableObject {
         estimatedReleaseMB = processGroups
             .filter { $0.effectiveSuggestion != .none }
             .reduce(0) { $0 + $1.totalMemoryMB }
+        let pendingFreeze = processGroups.filter {
+            SceneSwitchPolicy.isAutoCandidate(SceneSwitchTarget(group: $0))
+        }.count
+        autoStatusText = SceneSwitchPolicy.statusText(
+            authorization: settings.authorizationLevel,
+            match: match,
+            isDebouncing: sceneState.isDebouncing,
+            frozenCount: executor.frozenProcesses.count,
+            pendingFreezeCount: pendingFreeze
+        )
 
         persistIfNeeded(snapshots: snapshots, now: now)
     }
@@ -436,6 +458,21 @@ public final class AppCoordinator: ObservableObject {
         try? store.replaceFrozen(executor.frozenProcesses)
     }
 
+    /// SIGSTOP of an AppKit app with windows can hang WindowServer. Resume any that
+    /// an older build froze, and drop them from the freeze list.
+    private func thawWindowedIfFrozen() {
+        let stuck = executor.frozenProcesses.filter {
+            executor.isUnsafeToFreeze($0.pid, $0.bundleID.isEmpty ? nil : $0.bundleID)
+        }
+        for item in stuck {
+            _ = executor.thaw(pid: item.pid)
+        }
+        if !stuck.isEmpty {
+            lastMessage = "已恢复 \(stuck.count) 个带窗口的应用，避免卡住屏幕。"
+            lastMessageIsError = false
+        }
+    }
+
     /// Container / VPN keep-alive processes must never stay SIGSTOP'd, even if an older
     /// build froze them. Resume and drop them from the freeze list on every sample.
     private func thawKeepAliveIfFrozen() {
@@ -543,7 +580,21 @@ public final class AppCoordinator: ObservableObject {
             transitionCache = store.loadWorkspaceTransitions()
         }
 
-        guard plan.didAutoProcess else { return }
+        var actions = plan.actions
+        if plan.outcome == .unchanged {
+            let dwell = SceneSwitchPolicy.dwellActions(
+                state: sceneState,
+                authorization: settings.authorizationLevel,
+                current: match,
+                targets: targets,
+                lastActionAt: lastDwellActionAt,
+                now: now
+            )
+            let existing = Set(actions.map(\.groupKey))
+            actions.append(contentsOf: dwell.filter { !existing.contains($0.groupKey) })
+        }
+
+        guard !plan.thaw.isEmpty || !actions.isEmpty else { return }
 
         var freezeCount = 0
         var throttleCount = 0
@@ -554,13 +605,14 @@ public final class AppCoordinator: ObservableObject {
             }
         }
         let groupByKey = Dictionary(uniqueKeysWithValues: groups.map { ($0.key, $0) })
-        for planned in plan.actions {
+        for planned in actions {
             guard let group = groupByKey[planned.groupKey] else { continue }
             let result = executor.execute(
                 action: planned.action,
                 snapshots: group.members.map(\.snapshot),
                 groupBundleID: group.key.hasPrefix("pid:") ? group.primary.snapshot.bundleID : group.key
             )
+            lastDwellActionAt[planned.groupKey] = now
             if result.ok {
                 switch planned.action {
                 case .freeze: freezeCount += 1
