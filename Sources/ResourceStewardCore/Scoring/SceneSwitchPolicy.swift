@@ -42,6 +42,10 @@ public struct SceneSwitchTarget: Sendable, Equatable {
     public let alreadyFrozen: Bool
     public let alreadyThrottled: Bool
     public let isAccessory: Bool
+    public let isRegularApp: Bool
+    public let ownsWindows: Bool
+    public let idleSeconds: TimeInterval
+    public let path: String
 
     public init(
         groupKey: String,
@@ -53,7 +57,11 @@ public struct SceneSwitchTarget: Sendable, Equatable {
         isInCurrentWorkspace: Bool,
         alreadyFrozen: Bool,
         alreadyThrottled: Bool,
-        isAccessory: Bool = false
+        isAccessory: Bool = false,
+        isRegularApp: Bool = true,
+        ownsWindows: Bool = false,
+        idleSeconds: TimeInterval = 0,
+        path: String = ""
     ) {
         self.groupKey = groupKey
         self.bundleID = bundleID
@@ -65,6 +73,10 @@ public struct SceneSwitchTarget: Sendable, Equatable {
         self.alreadyFrozen = alreadyFrozen
         self.alreadyThrottled = alreadyThrottled
         self.isAccessory = isAccessory
+        self.isRegularApp = isRegularApp
+        self.ownsWindows = ownsWindows
+        self.idleSeconds = idleSeconds
+        self.path = path
     }
 
     public init(group: ProcessGroupViewModel) {
@@ -78,7 +90,11 @@ public struct SceneSwitchTarget: Sendable, Equatable {
             isInCurrentWorkspace: group.score.isInCurrentWorkspace,
             alreadyFrozen: group.appliedAction == .freeze,
             alreadyThrottled: group.appliedAction == .throttle,
-            isAccessory: group.isAccessory
+            isAccessory: group.isAccessory,
+            isRegularApp: group.isRegularApp,
+            ownsWindows: group.ownsWindows,
+            idleSeconds: group.idleSeconds,
+            path: group.appPath ?? group.primary.snapshot.path
         )
     }
 }
@@ -139,14 +155,44 @@ public struct SceneSwitchPlan: Sendable, Equatable {
 
 public enum SceneSwitchPolicy: Sendable {
     public static let defaultDebounceSeconds: TimeInterval = 15
+    /// Don't freeze an app the user just left. Two minutes is long enough to
+    /// survive Cmd-Tab glances, short enough to feel like the steward is working.
+    public static let defaultMinIdleSeconds: TimeInterval = 120
+    public static let defaultDwellCooldownSeconds: TimeInterval = 90
+    public static let defaultMaxActionsPerTick: Int = 6
 
     /// Level 1 never auto-quits: freeze instead so unsaved windows are not dismissed.
+    /// Throttle (nice) is skipped: it is almost invisible on idle apps and was
+    /// previously applied to system daemons, which made the product look idle.
     public static func autoAction(for suggested: SuggestedAction) -> SuggestedAction? {
         switch suggested {
-        case .none: return nil
-        case .throttle: return .throttle
+        case .none, .throttle: return nil
         case .freeze, .quit: return .freeze
         }
+    }
+
+    public static func isAutoCandidate(
+        _ target: SceneSwitchTarget,
+        minIdleSeconds: TimeInterval = defaultMinIdleSeconds
+    ) -> Bool {
+        guard !target.isForeground,
+              !target.isProtected,
+              !target.isAccessory,
+              !target.ownsWindows,
+              !target.isInCurrentWorkspace,
+              target.idleSeconds >= minIdleSeconds,
+              UserFacingAppPolicy.isAutoEligible(
+                  bundleID: target.bundleID,
+                  processName: target.processName,
+                  path: target.path,
+                  isAccessory: target.isAccessory,
+                  isRegularApp: target.isRegularApp
+              ),
+              let action = autoAction(for: target.suggestedAction)
+        else { return false }
+        if action == .freeze && target.alreadyFrozen { return false }
+        if action == .throttle && target.alreadyThrottled { return false }
+        return true
     }
 
     public static func evaluate(
@@ -156,7 +202,8 @@ public enum SceneSwitchPolicy: Sendable {
         targets: [SceneSwitchTarget],
         frozen: [FrozenProcess],
         now: Date,
-        debounceSeconds: TimeInterval = defaultDebounceSeconds
+        debounceSeconds: TimeInterval = defaultDebounceSeconds,
+        minIdleSeconds: TimeInterval = defaultMinIdleSeconds
     ) -> (state: SceneSwitchState, plan: SceneSwitchPlan) {
         let currentID = current.workspace?.id
         var next = state
@@ -249,26 +296,14 @@ public enum SceneSwitchPolicy: Sendable {
 
         let core = current.workspace?.coreAppBundleIDs ?? []
         let thaw = frozen.filter { item in
-            !item.bundleID.isEmpty && core.contains(item.bundleID)
+            if item.bundleID.isEmpty { return false }
+            if core.contains(item.bundleID) { return true }
+            if let root = ProcessFamily.rootBundleID(from: item.bundleID), core.contains(root) {
+                return true
+            }
+            return false
         }
-        let actions = targets.compactMap { target -> PlannedSceneAction? in
-            guard !target.isForeground,
-                  !target.isProtected,
-                  !target.isAccessory,
-                  !target.isInCurrentWorkspace,
-                  isAppBundle(target.bundleID),
-                  let action = autoAction(for: target.suggestedAction)
-            else { return nil }
-            if action == .freeze && target.alreadyFrozen { return nil }
-            if action == .throttle && target.alreadyThrottled { return nil }
-            return PlannedSceneAction(
-                groupKey: target.groupKey,
-                bundleID: target.bundleID,
-                processName: target.processName,
-                action: action,
-                originalSuggestion: target.suggestedAction
-            )
-        }
+        let actions = plannedActions(from: targets, minIdleSeconds: minIdleSeconds)
 
         let freezeCount = actions.filter { $0.action == .freeze }.count
         let throttleCount = actions.filter { $0.action == .throttle }.count
@@ -295,6 +330,77 @@ public enum SceneSwitchPolicy: Sendable {
     /// `python`, `fontd`, `suggestd` and other nameless daemons are not workspace apps.
     public static func isAppBundle(_ bundleID: String) -> Bool {
         bundleID.contains(".")
+    }
+
+    /// While the user stays in a classified scene, keep freezing idle off-scene apps.
+    /// Scene-switch-only auto-handling never fires during a long coding session.
+    public static func dwellActions(
+        state: SceneSwitchState,
+        authorization: AuthorizationLevel,
+        current: WorkspaceMatch,
+        targets: [SceneSwitchTarget],
+        lastActionAt: [String: Date],
+        now: Date,
+        minIdleSeconds: TimeInterval = defaultMinIdleSeconds,
+        cooldownSeconds: TimeInterval = defaultDwellCooldownSeconds,
+        maxActions: Int = defaultMaxActionsPerTick
+    ) -> [PlannedSceneAction] {
+        guard authorization == .sceneSwitch else { return [] }
+        guard state.sessionReady, !state.isDebouncing else { return [] }
+        guard let currentID = current.workspace?.id, currentID == state.committedWorkspaceID else {
+            return []
+        }
+        let planned = plannedActions(from: targets, minIdleSeconds: minIdleSeconds).filter { item in
+            if let last = lastActionAt[item.groupKey], now.timeIntervalSince(last) < cooldownSeconds {
+                return false
+            }
+            return true
+        }
+        if planned.count <= maxActions { return planned }
+        return Array(planned.prefix(maxActions))
+    }
+
+    public static func plannedActions(
+        from targets: [SceneSwitchTarget],
+        minIdleSeconds: TimeInterval = defaultMinIdleSeconds
+    ) -> [PlannedSceneAction] {
+        targets.compactMap { target -> PlannedSceneAction? in
+            guard isAutoCandidate(target, minIdleSeconds: minIdleSeconds),
+                  let action = autoAction(for: target.suggestedAction)
+            else { return nil }
+            return PlannedSceneAction(
+                groupKey: target.groupKey,
+                bundleID: target.bundleID,
+                processName: target.processName,
+                action: action,
+                originalSuggestion: target.suggestedAction
+            )
+        }
+    }
+
+    public static func statusText(
+        authorization: AuthorizationLevel,
+        match: WorkspaceMatch,
+        isDebouncing: Bool,
+        frozenCount: Int,
+        pendingFreezeCount: Int
+    ) -> String {
+        if authorization != .sceneSwitch {
+            return "仅建议，点「应用建议」才会处理"
+        }
+        if match.isUnclassified {
+            return "未分类，半自动暂停"
+        }
+        if isDebouncing {
+            return "场景切换确认中…"
+        }
+        if frozenCount > 0 {
+            return "「\(match.displayName)」· 已冻结 \(frozenCount) 个"
+        }
+        if pendingFreezeCount > 0 {
+            return "「\(match.displayName)」· \(pendingFreezeCount) 个离场景应用空闲后将冻结"
+        }
+        return "「\(match.displayName)」停留中 · 暂无达到冻结条件的离场景应用"
     }
 
     public static func summary(

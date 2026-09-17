@@ -71,7 +71,7 @@ struct MenuBarPanel: View {
                         Text(coordinator.match.displayName)
                             .font(.subheadline.weight(.semibold))
                     }
-                    Text(matchCaption)
+                    Text(coordinator.autoStatusText.isEmpty ? matchCaption : coordinator.autoStatusText)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

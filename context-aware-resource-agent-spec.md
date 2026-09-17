@@ -169,16 +169,20 @@ df(a)  = 有多少个场景把 a 列为核心 App
 ### 5.2 Reclaim Score 公式
 
 ```
-score = w1 × normalize(idleMinutes, cap=120)
-      + w2 × normalize(memoryFootprintMB, cap=8192)
+score = w1 × normalize(idleMinutes, cap=45)
+      + w2 × normalize(memoryFootprintMB, cap=2048)
       + w3 × restartabilityBonus(bundleID)     // 查本地静态表，默认 0.5
+      + w6 × (classified && !isInCurrentWorkspace ? 1.0 : 0)
       − w4 × (isInCurrentWorkspace ? 1.0 : 0)  // 大权重
       − w5 × (isForeground ? 1.0 : 0)          // 权重设为足以让 score 归零
 
-初始权重（可在 Settings 调整）：
+初始权重（可在 Settings 调整；seed-user 校准后的值）：
 w1 = 30, w2 = 25, w3 = 15, w4 = 80, w5 = 999
+w6 = 28   // 已分类场景下，不在当前 workspace 的 App 加分，使切走后的浏览器能在数分钟内达到冻结，而不是卡在「降低优先级」
+idleCapMinutes = 45
+memoryCapMB = 2048
 
-score 归一化到 0-100，clip 下界为 0
+score 归一化到 0-100，clip 下界为 0。离场景加分在归一化之后加入，不进入 (w1+w2+w3) 分母。
 ```
 
 分数区间 → 建议动作映射（v1 固定阈值，不做机器学习）：
@@ -217,18 +221,22 @@ func execute(action: SuggestedAction, pid: pid_t) {
 
 1. 授权级别为 Level 1（`sceneSwitch`）
 2. 当前场景是已分类 workspace（未分类不触发任何自动处理，与 5.1 一致）
-3. 已确认的场景 ID 发生变化（启动后第一次匹配只采纳当前场景，不视为切换）
-4. 新场景连续保持默认 15 秒，避免证据分在阈值附近抖动
+3. 启动后第一次匹配只采纳当前场景，不处理
+4. 场景 ID 变化时，新场景连续保持默认 15 秒再提交，避免证据分在阈值附近抖动
+5. **停留在同一已分类场景时也会处理**（不必再切一次）。只切场景才动手时，人整天停在「办公」就永远不会冻结后台 App
 
 处理范围：
 
-- **过滤器**：只处理 Reclaim Score 已给出建议（`suggestedAction != .none`）的离场景应用。刚在前台、分数不够的应用不会被盲冻。
-- **离场景**：不在新场景 `coreAppBundleIDs` 中、非前台、非保护、非黑名单。
+- **过滤器**：只处理 Reclaim Score 建议为 `.freeze` / `.quit` 的离场景**用户应用**。`.throttle` 不再自动执行（nice 值变化用户几乎无感，且容易误伤系统守护进程）。
+- **最短空闲**：距上次前台至少 2 分钟。刚 Cmd-Tab 走的 App 不会立刻被冻。
+- **离场景**：不在当前场景 `coreAppBundleIDs` 中、非前台、非保护、非黑名单。
+- **用户应用**：Dock 可见的常规 App（`activationPolicy == .regular`），路径含 `.app`。`com.apple.*` 仅允许 Safari / Music / Notes 等用户应用白名单；`chronod`、Control Strip、Widget、XPC 不建议也不自动处理。
+- **有窗口不冻结**：进程当前拥有参与合成的 CG 窗口（layer < 24、面积 ≥ 2×2）时，半自动与手动都不 `SIGSTOP`。WindowServer 会向这些进程索要 surface；冻住它们会导致内置屏 `Display not ready`，userspace watchdog 杀掉 WindowServer、图形会话重启。窗口列表读不到或读不全时，对 regular App 按有窗口处理。退出（`terminate()`）仍允许。
 - **常驻网络**：VPN / 代理 / Packet Tunnel（Shadowrocket、Clash、Surge、WireGuard、Tailscale 等）视为 Keep-Alive，分数归零，半自动与手动都不冻结。菜单栏 accessory 应用也不会被半自动处理。
 - **常驻计算**：容器 / 虚拟机运行时（OrbStack 含 `vmgr`、Docker Desktop、Colima、Podman、UTM 等）同样 Keep-Alive。冻结它们会暂停 Linux VM，MySQL 等容器写入会失败。OrbStack 的 `dev.kdrag0n.MacVirt.vmgr` 并入主应用族，不单独打分。
 - **用户常用**：用户可在「常用」页勾选任意 App（跨场景保活）。分数归零，半自动与手动都不冻结；Helper 随主应用一起保护。与场景核心 App 不同：常用不依赖当前 workspace。
-- **半自动范围**：Level 1 只处理带 reverse-DNS bundle ID 的 App；`python` / `fontd` 这类进程名不会被切场景自动降级。
-- **动作降级**：Level 1 将 `.quit` 改成 `.freeze`，避免未保存窗口被自动关掉。`.throttle` / `.freeze` 按建议执行。
+- **半自动范围**：Level 1 只处理带 reverse-DNS bundle ID 的用户 App；`python` / `fontd` 这类进程名不会被自动冻结。
+- **动作降级**：Level 1 将 `.quit` 改成 `.freeze`，避免未保存窗口被自动关掉。
 - **恢复**：属于新场景核心 App 的已冻结进程会被 `SIGCONT` 恢复。用户从 Dock / Spotlight / Cmd-Tab 打开某个已冻结 App 时，按进程族解冻（含 Helper），不需要再到管家里点「恢复」。
 - **Level 0**：仍记录切换（见 5.5），但不自动执行。
 - **Level 2**：v3 才开放；当前若被写入配置会回退到 Level 0。
@@ -324,6 +332,6 @@ Safari 的 `com.apple.WebKit.WebContent` 会被多个 App 共用，不并入 Saf
 ## 10. 风险与已知限制
 
 1. `proc_pidinfo` 系接口是 Apple 标注的 private interface，macOS 大版本升级时行为可能变化，需要每年跟进系统更新验证
-2. Action Executor 的 `.freeze`/`.quit` 效果依赖目标 App 是否规范处理 SIGSTOP/未保存状态提示，个别 App 可能有异常表现，需要建立"问题 App 黑名单"机制（用户反馈后拉黑，不再对其建议自动处理）
+2. Action Executor 的 `.freeze`/`.quit` 效果依赖目标 App 是否规范处理 SIGSTOP/未保存状态提示，个别 App 可能有异常表现，需要建立"问题 App 黑名单"机制（用户反馈后拉黑，不再对其建议自动处理）。对有窗口的 AppKit 应用执行 `SIGSTOP` 会卡住 WindowServer（已在 5.4 禁止）
 3. Reclaim Score 的固定权重是经验值，v1 阶段没有真实用户反馈数据支撑，预期需要至少一轮种子用户使用后调整
 4. 内存相关的"预计可释放"数值本质是估算，不承诺实际效果，需要在首次使用时做一次性说明（onboarding），避免后续被认为是虚假宣传

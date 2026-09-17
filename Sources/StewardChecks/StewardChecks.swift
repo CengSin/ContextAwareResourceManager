@@ -184,7 +184,7 @@ enum StewardChecks {
             ),
             workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.WebStorm"])
         )
-        check("workspace core not suggested", inWorkspace.score == 0 && inWorkspace.suggestedAction == .none && inWorkspace.isInCurrentWorkspace)
+        check("workspace core not suggested", inWorkspace.suggestedAction == .none && inWorkspace.isInCurrentWorkspace && inWorkspace.score < 30)
 
         let chrome = ReclaimScorer.score(
             snapshot: ProcessSnapshot(
@@ -194,6 +194,58 @@ enum StewardChecks {
             workspace: nil
         )
         check("idle heavy chrome reaches quit", chrome.score >= 85 && chrome.suggestedAction == .quit)
+
+        let offSceneChrome = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 78, uid: 501, bundleID: "com.google.Chrome", processName: "Google Chrome",
+                memoryFootprintMB: 800, cpuPercent: 0, isForeground: false, idleSeconds: 5 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check(
+            "off-scene chrome freezes after a few idle minutes",
+            offSceneChrome.suggestedAction == .freeze || offSceneChrome.suggestedAction == .quit
+        )
+        check("off-scene bonus applied", offSceneChrome.components.offWorkspaceContribution >= 20)
+
+        let idleCodex = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 79, uid: 501, bundleID: "com.openai.codex", processName: "ChatGPT",
+                memoryFootprintMB: 369, cpuPercent: 0, isForeground: false, idleSeconds: 53 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check("long-idle off-scene app reaches freeze", idleCodex.suggestedAction == .freeze || idleCodex.suggestedAction == .quit)
+
+        check("chronod is not suggestable", !UserFacingAppPolicy.isSuggestable(bundleID: "com.apple.chronod", processName: "chronod"))
+        check("controlstrip is not auto eligible", !UserFacingAppPolicy.isAutoEligible(bundleID: "com.apple.controlstrip", processName: "Control Strip"))
+        check("safari is suggestable", UserFacingAppPolicy.isSuggestable(bundleID: "com.apple.Safari", processName: "Safari"))
+        check("chrome is auto eligible", UserFacingAppPolicy.isAutoEligible(bundleID: "com.google.Chrome", processName: "Chrome"))
+        check("widget extension is not suggestable", UserFacingAppPolicy.isWidgetOrExtension(bundleID: "com.apple.ScreenTimeWidgetApplication", processName: "Screen Time"))
+
+        let notesWindow = WindowSurface(ownerPID: 24088, layer: 0, width: 800, height: 600)
+        let menuBar = WindowSurface(ownerPID: 24088, layer: 25, width: 400, height: 22)
+        let tiny = WindowSurface(ownerPID: 99, layer: 0, width: 1, height: 1)
+        let invisible = WindowSurface(ownerPID: 88, layer: 0, width: 100, height: 100, alpha: 0)
+        check("layer 0 window participates", notesWindow.participatesInCompositor)
+        check("menu bar does not participate", !menuBar.participatesInCompositor)
+        check("tiny window skipped", !tiny.participatesInCompositor)
+        check("zero alpha skipped", !invisible.participatesInCompositor)
+        check("owner pids ignore non-surfaces", WindowedProcessPolicy.ownerPIDs(from: [notesWindow, menuBar, tiny, invisible]) == [24088])
+        check("regular app fail-closed without list", WindowedProcessPolicy.snapshotOwnsWindows(pid: 1, isRegularApp: true, ownerPIDs: nil))
+        check("daemon not assumed windowed", !WindowedProcessPolicy.snapshotOwnsWindows(pid: 1, isRegularApp: false, ownerPIDs: nil))
+        check("pid in list owns windows", WindowedProcessPolicy.snapshotOwnsWindows(pid: 24088, isRegularApp: true, ownerPIDs: [24088]))
+        check("pid not in list has no windows", !WindowedProcessPolicy.snapshotOwnsWindows(pid: 2, isRegularApp: true, ownerPIDs: [24088]))
+        check("unsafe when window list missing", WindowedProcessPolicy.isUnsafeToFreeze(pid: 1, bundleID: nil, ownerPIDs: nil))
+        check("unsafe when pid owns window", WindowedProcessPolicy.isUnsafeToFreeze(pid: 24088, bundleID: "com.apple.Notes", ownerPIDs: [24088]))
+        check("safe when pid has no window", !WindowedProcessPolicy.isUnsafeToFreeze(pid: 9, bundleID: nil, ownerPIDs: [24088]))
+        let parsedWindow = WindowedProcessPolicy.parse([
+            "kCGWindowOwnerPID": 24088,
+            "kCGWindowLayer": 0,
+            "kCGWindowAlpha": 1.0,
+            "kCGWindowBounds": ["Width": 800.0, "Height": 600.0]
+        ])
+        check("parse window owner", parsedWindow?.ownerPID == 24088 && parsedWindow?.participatesInCompositor == true)
 
         check("threshold none", ReclaimScorer.suggestedAction(for: 10) == .none)
         check("threshold throttle", ReclaimScorer.suggestedAction(for: 30) == .throttle)
@@ -256,6 +308,9 @@ enum StewardChecks {
         check("blacklist zeroes", blacklisted.score == 0 && blacklisted.suggestedAction == .none)
 
         check("chrome renderer roots to chrome", ProcessFamily.rootBundleID(from: "com.google.Chrome.helper.renderer") == "com.google.Chrome")
+        check("wechat helper roots to wechat", ProcessFamily.rootBundleID(from: "com.tencent.xinWeChat.WeChatHelper") == "com.tencent.xinWeChat")
+        check("wechat flue roots to wechat", ProcessFamily.rootBundleID(from: "com.tencent.flue.WeChatAppEx") == "com.tencent.xinWeChat")
+        check("electron helper roots to parent", ProcessFamily.rootBundleID(from: "com.anysphere.sand.electron-helper.Renderer") == "com.anysphere.sand")
         check("chrome gpu helper roots to chrome", ProcessFamily.rootBundleID(from: "com.google.Chrome.helper.gpu") == "com.google.Chrome")
         check("electron helper roots to parent", ProcessFamily.rootBundleID(from: "com.figma.Desktop.helper") == "com.figma.Desktop")
         check("plain app is its own root", ProcessFamily.rootBundleID(from: "com.jetbrains.WebStorm") == "com.jetbrains.WebStorm")
@@ -607,8 +662,35 @@ enum StewardChecks {
             idleSeconds: 120
         )
         let executor = ActionExecutor()
+        executor.isUnsafeToFreeze = { _, _ in false }
         let freezeResult = executor.execute(action: .freeze, snapshot: freezeSnapshot)
         check("freeze sleep succeeds", freezeResult.ok)
+
+        let sleeperWindow = Process()
+        sleeperWindow.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        sleeperWindow.arguments = ["8"]
+        try sleeperWindow.run()
+        let windowPID = Int32(sleeperWindow.processIdentifier)
+        let refuseWindowed = ActionExecutor()
+        refuseWindowed.isUnsafeToFreeze = { _, _ in true }
+        let refuseWindowedResult = refuseWindowed.execute(
+            action: .freeze,
+            snapshot: ProcessSnapshot(
+                pid: windowPID,
+                uid: UInt32(getuid()),
+                bundleID: "com.apple.Notes",
+                processName: "Notes",
+                memoryFootprintMB: 140,
+                cpuPercent: 0,
+                isForeground: false,
+                ownsWindows: true,
+                idleSeconds: 180
+            )
+        )
+        check("refuses to freeze windowed app", !refuseWindowedResult.ok && refuseWindowedResult.message.contains("窗口"))
+        check("windowed refuse leaves process running", SystemMonitor().processStatus(pid: windowPID) != 4)
+        sleeperWindow.terminate()
+        sleeperWindow.waitUntilExit()
         check("frozen pid is tracked", executor.isFrozen(pid: sleepPID))
         check("frozen sleep is SSTOP", SystemMonitor().processStatus(pid: sleepPID) == 4)
 
@@ -617,6 +699,7 @@ enum StewardChecks {
         check("frozen persist roundtrip", loadedFrozen.contains(where: { $0.pid == sleepPID }))
 
         let restoredExecutor = ActionExecutor()
+        restoredExecutor.isUnsafeToFreeze = { _, _ in false }
         let restored = restoredExecutor.restorePersisted(store.loadFrozen())
         check("restore keeps process stopped", SystemMonitor().processStatus(pid: sleepPID) == 4)
         check("restore tracks pid", restoredExecutor.isFrozen(pid: sleepPID) && restored.contains(where: { $0.pid == sleepPID }))
@@ -625,6 +708,12 @@ enum StewardChecks {
             FrozenProcess(pid: 1_000_001, bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper", action: .freeze)
         ])
         check("restore does not re-freeze orbstack vmgr", skippedKeepAlive.isEmpty)
+        let skippedWindowed = ActionExecutor()
+        skippedWindowed.isUnsafeToFreeze = { _, _ in true }
+        let skippedWindowedRestored = skippedWindowed.restorePersisted([
+            FrozenProcess(pid: 1_000_002, bundleID: "com.apple.Notes", processName: "Notes", action: .freeze)
+        ])
+        check("restore does not re-freeze windowed app", skippedWindowedRestored.isEmpty)
 
         _ = executor.thaw(pid: sleepPID)
         let reapplied = restoredExecutor.restorePersisted(store.loadFrozen())
@@ -639,6 +728,7 @@ enum StewardChecks {
         try sleeperOpen.run()
         let openPID = Int32(sleeperOpen.processIdentifier)
         let openExecutor = ActionExecutor()
+        openExecutor.isUnsafeToFreeze = { _, _ in false }
         check(
             "freeze for dock-thaw",
             openExecutor.execute(
@@ -677,6 +767,7 @@ enum StewardChecks {
             idleSeconds: 120
         )
         let quitExecutor = ActionExecutor()
+        quitExecutor.isUnsafeToFreeze = { _, _ in false }
         check("quit-path freeze", quitExecutor.execute(action: .freeze, snapshot: freezeSnapshot2).ok)
         check("quit-path frozen", SystemMonitor().processStatus(pid: sleepPID2) == 4)
         quitExecutor.thawAll()

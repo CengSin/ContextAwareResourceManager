@@ -61,8 +61,9 @@ public enum ReclaimScorer: Sendable {
         let restartContribution = weights.restartability * restart / maxPositive * 100
         let workspacePenalty = inWorkspace ? weights.workspace : 0
         let foregroundPenalty = snapshot.isForeground ? weights.foreground : 0
+        let offWorkspaceContribution = (workspace != nil && !inWorkspace) ? weights.offWorkspace : 0
 
-        let raw = idleContribution + memoryContribution + restartContribution - workspacePenalty - foregroundPenalty
+        let raw = idleContribution + memoryContribution + restartContribution + offWorkspaceContribution - workspacePenalty - foregroundPenalty
         var score = min(100, max(0, raw))
         var action = suggestedAction(for: score, weights: weights)
 
@@ -72,6 +73,17 @@ public enum ReclaimScorer: Sendable {
         }
 
         if inWorkspace && action == .quit {
+            action = .none
+        }
+
+        if action != .none,
+           !UserFacingAppPolicy.isSuggestable(
+               bundleID: snapshot.bundleID,
+               processName: snapshot.processName,
+               path: snapshot.path,
+               isAccessory: snapshot.isAccessory,
+               isRegularApp: snapshot.isRegularApp
+           ) {
             action = .none
         }
 
@@ -85,7 +97,8 @@ public enum ReclaimScorer: Sendable {
                 memorySizeContribution: memoryContribution,
                 restartabilityContribution: restartContribution,
                 workspacePenalty: workspacePenalty,
-                foregroundPenalty: foregroundPenalty
+                foregroundPenalty: foregroundPenalty,
+                offWorkspaceContribution: offWorkspaceContribution
             ),
             suggestedAction: action,
             estimatedReleaseMB: snapshot.memoryFootprintMB,

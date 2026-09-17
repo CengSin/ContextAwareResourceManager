@@ -110,6 +110,14 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
         members.contains(where: { $0.snapshot.isAccessory })
     }
 
+    public var isRegularApp: Bool {
+        members.contains(where: { $0.snapshot.isRegularApp })
+    }
+
+    public var ownsWindows: Bool {
+        members.contains(where: { $0.snapshot.ownsWindows })
+    }
+
     public var isKeepAlive: Bool {
         members.contains {
             KeepAlivePolicy.isKeepAlive(

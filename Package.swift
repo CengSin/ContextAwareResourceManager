@@ -25,6 +25,7 @@ let package = Package(
             dependencies: ["ProcBridge"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
+                .linkedFramework("CoreGraphics"),
                 .linkedLibrary("sqlite3")
             ]
         ),

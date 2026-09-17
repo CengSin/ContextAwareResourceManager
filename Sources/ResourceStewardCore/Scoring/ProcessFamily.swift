@@ -6,14 +6,17 @@ import Foundation
 public enum ProcessFamily: Sendable {
     private static let hostedCompanions: [String: String] = [
         "org.mozilla.plugincontainer": "org.mozilla.firefox",
-        "org.mozilla.firefox.plugincontainer": "org.mozilla.firefox"
+        "org.mozilla.firefox.plugincontainer": "org.mozilla.firefox",
+        "com.tencent.xinWeChat.WeChatHelper": "com.tencent.xinWeChat"
     ]
 
     /// Sibling bundles that are not named `*.helper.*` but still belong to the parent app.
     /// OrbStack's VM (`dev.kdrag0n.MacVirt.vmgr`) is the process that actually runs containers.
     private static let familyPrefixes: [(prefix: String, root: String)] = [
         ("dev.kdrag0n.MacVirt.", "dev.kdrag0n.MacVirt"),
-        ("com.docker.", "com.docker.docker")
+        ("com.docker.", "com.docker.docker"),
+        ("com.tencent.xinWeChat.", "com.tencent.xinWeChat"),
+        ("com.tencent.flue.", "com.tencent.xinWeChat")
     ]
 
     /// Parent bundle ID. `com.google.Chrome.helper.renderer` → `com.google.Chrome`.
@@ -28,6 +31,10 @@ public enum ProcessFamily: Sendable {
                lowered != pair.root.lowercased() {
                 return pair.root
             }
+        }
+        if let range = bundleID.range(of: ".electron-helper", options: .caseInsensitive) {
+            let root = String(bundleID[..<range.lowerBound])
+            return root.isEmpty ? bundleID : root
         }
         if let range = bundleID.range(of: ".helper", options: .caseInsensitive) {
             let root = String(bundleID[..<range.lowerBound])

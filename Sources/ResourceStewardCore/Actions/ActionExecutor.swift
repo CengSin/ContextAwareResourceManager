@@ -23,6 +23,9 @@ public final class ActionExecutor: @unchecked Sendable {
     private var throttled: Set<Int32> = []
     private let currentUID = getuid()
     public var extraKeepAliveBundleIDs: Set<String> = []
+    public var isUnsafeToFreeze: (Int32, String?) -> Bool = { pid, bundleID in
+        WindowedProcessPolicy.isUnsafeToFreeze(pid: pid, bundleID: bundleID)
+    }
 
     public init() {}
 
@@ -65,6 +68,15 @@ public final class ActionExecutor: @unchecked Sendable {
                 ok: false,
                 message: "不会单独处理 Helper / Renderer。它们必须随主应用一起处理，否则开链接等功能会失效。",
                 action: action,
+                pid: snapshots.first?.pid ?? 0
+            )
+        }
+        if action == .freeze, snapshots.contains(where: { isUnsafeToFreeze($0.pid, $0.bundleID) }) {
+            let name = snapshots.first?.processName ?? "应用"
+            return ActionResult(
+                ok: false,
+                message: "\(name) 有窗口，冻结会卡住屏幕，已拒绝。",
+                action: .freeze,
                 pid: snapshots.first?.pid ?? 0
             )
         }
@@ -170,7 +182,7 @@ public final class ActionExecutor: @unchecked Sendable {
                 bundleID: item.bundleID,
                 processName: item.processName,
                 extras: extraKeepAliveBundleIDs
-            ) {
+            ) || isUnsafeToFreeze(item.pid, item.bundleID.isEmpty ? nil : item.bundleID) {
                 _ = kill(item.pid, SIGCONT)
                 continue
             }
@@ -211,6 +223,14 @@ public final class ActionExecutor: @unchecked Sendable {
     private func freeze(_ snapshot: ProcessSnapshot) -> ActionResult {
         if isFrozen(pid: snapshot.pid) {
             return ActionResult(ok: true, message: "\(snapshot.processName) 已处于冻结状态", action: .freeze, pid: snapshot.pid)
+        }
+        if isUnsafeToFreeze(snapshot.pid, snapshot.bundleID) {
+            return ActionResult(
+                ok: false,
+                message: "\(snapshot.processName) 有窗口，冻结会卡住屏幕，已拒绝。",
+                action: .freeze,
+                pid: snapshot.pid
+            )
         }
         if let denied = denyIfUnsafe(snapshot) { return denied }
         let signal = sendSignal(pid: snapshot.pid, signal: SIGSTOP)

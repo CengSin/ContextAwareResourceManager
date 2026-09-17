@@ -104,7 +104,7 @@ struct ProcessListView: View {
             return "没有匹配「\(needle)」的进程"
         }
         if coordinator.settings.showOnlyActionable {
-            return "没有达到建议阈值的进程。正在使用的 App（例如 Chrome）分数会被打到 0，请关掉「只看建议」或在上方搜索。"
+            return "没有达到冻结/降优先级阈值的用户应用。场景内、前台、常用和系统进程不会出现在这里。关掉「只看建议」可看全部。"
         }
         return "正在采集进程…"
     }
