@@ -26,7 +26,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
 
     private let client: any JevClientProtocol
     private let cache: JevCache
-    private let lock = NSLock()
+    /// Serializes inFlight/decisions; safe from async contexts.
+    private let stateQueue = DispatchQueue(label: "cc.resourcesteward.jev.advisor")
     private var inFlight: Set<String> = []
     /// Fresh composed decisions keyed by bundle ID.
     private var decisions: [String: Decision] = [:]
@@ -51,6 +52,11 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
 
     public func updateEnabled(_ enabled: Bool) {
         isEnabled = enabled
+    }
+
+
+    private func withState<T>(_ body: () -> T) -> T {
+        stateQueue.sync(execute: body)
     }
 
     /// Apply Jev override to a scorer suggestion for display (suggest-only / list).
@@ -89,19 +95,16 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                 rule: composed.rule,
                 requestID: cached.entry.requestID
             )
-            lock.lock()
-            decisions[candidate.bundleID] = decision
-            lock.unlock()
+            withState { decisions[candidate.bundleID] = decision }
             JevLog.info(
                 "cache_hit bundle=\(candidate.bundleID) request_id=\(cached.entry.requestID) action=\(composed.action.rawValue) rule=\(composed.rule.rawValue)"
             )
             return composed.action
         }
 
-        lock.lock()
-        let existing = decisions[candidate.bundleID]
-        let pending = inFlight.contains(candidate.bundleID)
-        lock.unlock()
+        let (existing, pending) = withState {
+            (decisions[candidate.bundleID], inFlight.contains(candidate.bundleID))
+        }
 
         if let existing, !existing.pending {
             return existing.action
@@ -155,10 +158,11 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
             scheduleIfNeeded: true
         )
 
-        lock.lock()
-        let decision = decisions[candidate.bundleID]
-        let pending = inFlight.contains(candidate.bundleID) || decision?.pending == true
-        lock.unlock()
+        let (decision, pending) = withState {
+            let decision = decisions[candidate.bundleID]
+            let pending = inFlight.contains(candidate.bundleID) || decision?.pending == true
+            return (decision, pending)
+        }
 
         if pending {
             JevLog.info("auto_fail_closed pending bundle=\(candidate.bundleID)")
@@ -178,9 +182,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     }
 
     public func knownDecision(bundleID: String) -> Decision? {
-        lock.lock()
-        defer { lock.unlock() }
-        return decisions[bundleID]
+        withState { decisions[bundleID] }
     }
 
     private func scheduleEvaluation(
@@ -194,20 +196,19 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     ) {
         let key = candidate.bundleID
         guard !key.isEmpty else { return }
-        lock.lock()
-        if inFlight.contains(key) {
-            lock.unlock()
-            return
+        let alreadyFlying = withState { () -> Bool in
+            if inFlight.contains(key) { return true }
+            inFlight.insert(key)
+            decisions[key] = Decision(action: .none, pending: true)
+            return false
         }
-        inFlight.insert(key)
-        decisions[key] = Decision(action: .none, pending: true)
-        lock.unlock()
+        if alreadyFlying { return }
 
         guard let apiKey = apiKeyProvider() else {
-            lock.lock()
-            inFlight.remove(key)
-            decisions[key] = Decision(action: .none, pending: false)
-            lock.unlock()
+            withState {
+                inFlight.remove(key)
+                decisions[key] = Decision(action: .none, pending: false)
+            }
             JevLog.error("missing_api_key bundle=\(key)")
             return
         }
@@ -253,33 +254,33 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                     model: result.model,
                     requestID: result.requestID
                 )
-                self.lock.lock()
-                self.inFlight.remove(key)
-                self.decisions[key] = Decision(
-                    action: composed.action,
-                    fromCache: false,
-                    pending: false,
-                    rule: composed.rule,
-                    requestID: result.requestID
-                )
-                self.lock.unlock()
+                self.withState {
+                    self.inFlight.remove(key)
+                    self.decisions[key] = Decision(
+                        action: composed.action,
+                        fromCache: false,
+                        pending: false,
+                        rule: composed.rule,
+                        requestID: result.requestID
+                    )
+                }
                 let tokens = "in=\(result.usage.inputTokens.map(String.init) ?? "?") out=\(result.usage.outputTokens.map(String.init) ?? "?")"
                 JevLog.info(
                     "request_ok request_id=\(result.requestID) bundle=\(key) status=\(result.httpStatus) latency_ms=\(result.latencyMs) usage=\(tokens) noul_network=\(fmt(result.answers.looksLikeNetworkOrSync)) noul_comm=\(fmt(result.answers.looksLikeCommunication)) noul_input=\(fmt(result.answers.looksLikeInputOrA11y)) noul_av=\(fmt(result.answers.looksLikeAVOrCapture)) noul_needs=\(fmt(result.answers.userLikelyNeedsSoon)) noul_safe=\(fmt(result.answers.safeToReclaimIdle)) choice=\(result.answers.preferredAction.choice) conf=\(fmt(result.answers.preferredAction.confidence)) composed=\(composed.action.rawValue) rule=\(composed.rule.rawValue)"
                 )
             } catch let error as JevClientError {
-                self.lock.lock()
-                self.inFlight.remove(key)
-                self.decisions[key] = Decision(action: .none, pending: false)
-                self.lock.unlock()
+                self.withState {
+                    self.inFlight.remove(key)
+                    self.decisions[key] = Decision(action: .none, pending: false)
+                }
                 JevLog.error(
                     "request_fail request_id=\(requestID) bundle=\(key) recoverable=\(error.isRecoverable) message=\(error.localizedDescription)"
                 )
             } catch {
-                self.lock.lock()
-                self.inFlight.remove(key)
-                self.decisions[key] = Decision(action: .none, pending: false)
-                self.lock.unlock()
+                self.withState {
+                    self.inFlight.remove(key)
+                    self.decisions[key] = Decision(action: .none, pending: false)
+                }
                 JevLog.error(
                     "request_fail request_id=\(requestID) bundle=\(key) recoverable=true message=\(error.localizedDescription)"
                 )
