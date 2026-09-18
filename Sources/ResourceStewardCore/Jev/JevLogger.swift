@@ -6,8 +6,13 @@ public enum JevLog {
     public static let subsystem = "cc.resourcesteward.jev"
     private static let logger = Logger(subsystem: subsystem, category: "reclaim")
     private static let queue = DispatchQueue(label: "cc.resourcesteward.jev.log")
-    private static var ring: [String] = []
+    /// Mutated only on `queue` — boxed for Swift concurrency checking.
+    private static let ringBox = RingBox()
     private static let ringLimit = 400
+
+    private final class RingBox: @unchecked Sendable {
+        var lines: [String] = []
+    }
 
     public static func info(_ message: String) {
         logger.info("\(message, privacy: .public)")
@@ -26,7 +31,7 @@ public enum JevLog {
 
     public static func recentLines(limit: Int = 80) -> [String] {
         queue.sync {
-            Array(ring.suffix(limit))
+            Array(ringBox.lines.suffix(limit))
         }
     }
 
@@ -34,9 +39,9 @@ public enum JevLog {
         let stamp = ISO8601DateFormatter().string(from: Date())
         let line = "\(stamp) \(message)"
         queue.async {
-            ring.append(line)
-            if ring.count > ringLimit {
-                ring.removeFirst(ring.count - ringLimit)
+            ringBox.lines.append(line)
+            if ringBox.lines.count > ringLimit {
+                ringBox.lines.removeFirst(ringBox.lines.count - ringLimit)
             }
             persistLine(line)
         }
