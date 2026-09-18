@@ -73,6 +73,21 @@ public struct ReclaimScoreRecord: Codable, Sendable, Equatable, Identifiable {
         self.isProtected = isProtected
         self.isInCurrentWorkspace = isInCurrentWorkspace
     }
+
+    public func with(suggestedAction action: SuggestedAction) -> ReclaimScoreRecord {
+        ReclaimScoreRecord(
+            pid: pid,
+            bundleID: bundleID,
+            processName: processName,
+            score: score,
+            components: components,
+            suggestedAction: action,
+            computedAt: computedAt,
+            estimatedReleaseMB: estimatedReleaseMB,
+            isProtected: isProtected,
+            isInCurrentWorkspace: isInCurrentWorkspace
+        )
+    }
 }
 
 public struct ScoreWeights: Codable, Sendable, Equatable {

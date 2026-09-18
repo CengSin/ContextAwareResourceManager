@@ -28,6 +28,7 @@ public final class AppCoordinator: ObservableObject {
 
     public let store: LocalStore
     public let executor = ActionExecutor()
+    public let jevAdvisor = JevReclaimAdvisor()
 
     private let monitor = SystemMonitor()
     private let pressureMonitor = MemoryPressureMonitor()
@@ -48,6 +49,7 @@ public final class AppCoordinator: ObservableObject {
         self.settings = store.loadSettings()
         self.workspaces = store.loadWorkspaces()
         self.blacklist = store.loadBlacklist()
+        self.jevAdvisor.updateEnabled(self.settings.jevReclaimEnabled)
         collector = ContextCollector { [weak self] activation in
             Task { @MainActor in
                 self?.handleActivation(activation)
@@ -178,7 +180,7 @@ public final class AppCoordinator: ObservableObject {
         )
         let recordByPid = Dictionary(uniqueKeysWithValues: records.map { ($0.pid, $0) })
 
-        let models: [ProcessViewModel] = snapshots.compactMap { snapshot in
+        var models: [ProcessViewModel] = snapshots.compactMap { snapshot in
             guard let record = recordByPid[snapshot.pid] else { return nil }
             return ProcessViewModel(
                 snapshot: snapshot,
@@ -187,6 +189,11 @@ public final class AppCoordinator: ObservableObject {
                 appliedAction: executor.appliedAction(pid: snapshot.pid)
             )
         }
+        models = applyJevOverrides(
+            models: models,
+            pressure: host.inferredPressure(sourceLevel: pressureMonitor.level),
+            windowOwnerPIDs: windowOwnerPIDs
+        )
 
         hostMemory = host
         hostCPU = cpu
@@ -255,6 +262,7 @@ public final class AppCoordinator: ObservableObject {
         if !settings.authorizationLevel.isAvailable {
             settings.authorizationLevel = .suggestOnly
         }
+        jevAdvisor.updateEnabled(settings.jevReclaimEnabled)
         try? store.saveSettings(settings)
         if let timer, abs(timer.timeInterval - settings.sampleIntervalSeconds) > 0.4 {
             timer.invalidate()
@@ -631,14 +639,30 @@ public final class AppCoordinator: ObservableObject {
         let groupByKey = Dictionary(uniqueKeysWithValues: groups.map { ($0.key, $0) })
         for planned in actions {
             guard let group = groupByKey[planned.groupKey] else { continue }
+            let candidate = JevHardGate.Candidate(
+                group: group,
+                favorites: settings.favoriteBundleIDs,
+                windowOwnerPIDs: executor.windowOwnerPIDs
+            )
+            let jevGated = jevAdvisor.decisionForAuto(
+                candidate: candidate,
+                pressure: pressure,
+                idleSeconds: group.idleSeconds,
+                memoryMB: group.totalMemoryMB,
+                cpuPercent: group.cpuPercent,
+                authorization: settings.authorizationLevel,
+                alreadyFrozen: group.appliedAction == .freeze,
+                scorerAction: planned.originalSuggestion
+            )
+            guard let action = SceneSwitchPolicy.autoAction(for: jevGated) else { continue }
             let result = executor.execute(
-                action: planned.action,
+                action: action,
                 snapshots: group.members.map(\.snapshot),
                 groupBundleID: group.key.hasPrefix("pid:") ? group.primary.snapshot.bundleID : group.key
             )
             lastDwellActionAt[planned.groupKey] = now
             if result.ok {
-                switch planned.action {
+                switch action {
                 case .freeze: freezeCount += 1
                 case .throttle: throttleCount += 1
                 default: break
@@ -685,6 +709,64 @@ public final class AppCoordinator: ObservableObject {
             )
         }
     }
+
+    /// Consult Jev for gray-zone candidates and rewrite suggested actions. Async results apply on later ticks.
+    private func applyJevOverrides(
+        models: [ProcessViewModel],
+        pressure: MemoryPressureLevel,
+        windowOwnerPIDs: Set<Int32>?
+    ) -> [ProcessViewModel] {
+        guard settings.jevReclaimEnabled, JevKeychain.hasAPIKey else { return models }
+        let groups = Self.grouped(models)
+        var actionByBundle: [String: SuggestedAction] = [:]
+        for group in groups {
+            let bundleID = group.primary.snapshot.bundleID ?? group.score.bundleID
+            guard !bundleID.isEmpty else { continue }
+            let candidate = JevHardGate.Candidate(
+                group: group,
+                favorites: settings.favoriteBundleIDs,
+                windowOwnerPIDs: windowOwnerPIDs
+            )
+            let adjusted = jevAdvisor.adjustSuggestion(
+                scorerAction: group.score.suggestedAction,
+                candidate: candidate,
+                pressure: pressure,
+                idleSeconds: group.idleSeconds,
+                memoryMB: group.totalMemoryMB,
+                cpuPercent: group.cpuPercent,
+                authorization: settings.authorizationLevel,
+                alreadyFrozen: group.appliedAction == .freeze,
+                scheduleIfNeeded: group.score.suggestedAction != .none
+                    || SceneSwitchPolicy.isAutoCandidate(SceneSwitchTarget(group: group))
+            )
+            let safe = CategoryBanPolicy.adjustedAction(
+                adjusted,
+                bundleID: bundleID,
+                processName: group.displayName,
+                path: group.appPath ?? ""
+            )
+            if safe != group.score.suggestedAction {
+                actionByBundle[bundleID] = safe
+                if let root = ProcessFamily.rootBundleID(from: bundleID) {
+                    actionByBundle[root] = safe
+                }
+            }
+        }
+        guard !actionByBundle.isEmpty else { return models }
+        return models.map { model in
+            let bundle = model.snapshot.bundleID ?? model.score.bundleID
+            let root = ProcessFamily.rootBundleID(from: bundle) ?? bundle
+            guard let action = actionByBundle[bundle] ?? actionByBundle[root] else { return model }
+            return ProcessViewModel(
+                snapshot: model.snapshot,
+                score: model.score.with(suggestedAction: action),
+                appPath: model.appPath,
+                appliedAction: model.appliedAction
+            )
+        }
+    }
+
+
 }
 
 public enum PanelTab: String, CaseIterable, Identifiable, Sendable {
