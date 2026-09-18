@@ -4,7 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var coordinator: AppCoordinator
     @State private var apiKeyDraft: String = ""
-    @State private var keyStatus: String = JevKeychain.hasAPIKey ? "已配置（钥匙串）" : "未配置"
+    @State private var keyStatus: String = JevAPIKey.statusDescription()
 
     var body: some View {
         ScrollView {
@@ -85,6 +85,9 @@ struct SettingsView: View {
                     Text("TypeSafe 官方可用 `jev-latest`；OpenRouter Decisions 示例为 `~typesafe/jev-latest`（含前导 `~`）。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text("优先读环境变量 `\(JevAPIKey.environmentVariable)`；也可写在 `~/Library/Application Support/ResourceSteward/env`（一行 KEY=VALUE）。菜单栏 App 读不到 shell 的 export 时用 env 文件最省事。钥匙串仅作回退（adhoc 重签易丢）。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     SecureField("API Key（TypeSafe / OpenRouter）", text: $apiKeyDraft)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
@@ -92,7 +95,7 @@ struct SettingsView: View {
                         Button("保存到钥匙串") {
                             do {
                                 try JevKeychain.saveAPIKey(apiKeyDraft)
-                                keyStatus = JevKeychain.hasAPIKey ? "已保存（钥匙串）" : "未配置"
+                                keyStatus = JevAPIKey.statusDescription()
                             } catch {
                                 keyStatus = error.localizedDescription
                             }
@@ -101,7 +104,7 @@ struct SettingsView: View {
                         Button("清除 Key") {
                             _ = JevKeychain.deleteAPIKey()
                             apiKeyDraft = ""
-                            keyStatus = "未配置"
+                            keyStatus = JevAPIKey.statusDescription()
                         }
                         .controlSize(.small)
                         Spacer()
@@ -132,8 +135,8 @@ struct SettingsView: View {
             }
             .padding(14)
             .onAppear {
-                keyStatus = JevKeychain.hasAPIKey ? "已配置（钥匙串）" : "未配置"
-                if apiKeyDraft.isEmpty, JevKeychain.hasAPIKey {
+                keyStatus = JevAPIKey.statusDescription()
+                if apiKeyDraft.isEmpty, JevAPIKey.hasAPIKey {
                     apiKeyDraft = ""
                 }
             }

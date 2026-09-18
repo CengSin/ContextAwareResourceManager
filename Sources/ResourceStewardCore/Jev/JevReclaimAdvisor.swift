@@ -40,7 +40,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         enabled: Bool = false,
         client: any JevClientProtocol = JevURLSessionClient(),
         cache: JevCache = JevCache(),
-        apiKeyProvider: @escaping () -> String? = { JevKeychain.loadAPIKey() },
+        apiKeyProvider: @escaping () -> String? = { JevAPIKey.loadAPIKey() },
         baseURLString: String = JevURLSessionClient.defaultBaseURLString,
         model: String = JevQuestions.defaultModel
     ) {

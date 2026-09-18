@@ -256,6 +256,9 @@ enum JevChecks {
             decodedBase.jevModel == JevQuestions.defaultModel
         )
 
+        check("api key env var name", JevAPIKey.environmentVariable == "RESOURCE_STEWARD_JEV_API_KEY")
+        check("api key status never empty", !JevAPIKey.statusDescription().isEmpty)
+
         return failures
     }
 }
