@@ -994,6 +994,7 @@ enum StewardChecks {
         sleeper.waitUntilExit()
 
         failures.append(contentsOf: try V2Checks.run())
+        failures.append(contentsOf: try JevChecks.run())
 
         if failures.isEmpty {
             print("\nAll checks passed.")

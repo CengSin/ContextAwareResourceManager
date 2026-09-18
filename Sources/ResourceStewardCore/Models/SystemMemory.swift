@@ -148,6 +148,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var favoriteApps: [FavoriteApp]
     /// Bumped when seed-user scoring defaults change. 1 = 45 min idle cap / 2 GB memory cap.
     public var scoringRevision: Int
+    /// When true and a TypeSafe API key is in Keychain, gray-zone reclaim consults Jev.
+    public var jevReclaimEnabled: Bool
 
     public init(
         authorizationLevel: AuthorizationLevel = .suggestOnly,
@@ -158,7 +160,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         hasCompletedOnboarding: Bool = false,
         showOnlyActionable: Bool = false,
         favoriteApps: [FavoriteApp] = [],
-        scoringRevision: Int = 1
+        scoringRevision: Int = 1,
+        jevReclaimEnabled: Bool = false
     ) {
         self.authorizationLevel = authorizationLevel
         self.weights = weights
@@ -169,6 +172,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.showOnlyActionable = showOnlyActionable
         self.favoriteApps = favoriteApps
         self.scoringRevision = scoringRevision
+        self.jevReclaimEnabled = jevReclaimEnabled
     }
 
     public static let `default` = AppSettings()
@@ -187,6 +191,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         case showOnlyActionable
         case favoriteApps
         case scoringRevision
+        case jevReclaimEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -210,6 +215,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         showOnlyActionable = try container.decodeIfPresent(Bool.self, forKey: .showOnlyActionable) ?? false
         favoriteApps = try container.decodeIfPresent([FavoriteApp].self, forKey: .favoriteApps) ?? []
+        jevReclaimEnabled = try container.decodeIfPresent(Bool.self, forKey: .jevReclaimEnabled) ?? false
         var revision = try container.decodeIfPresent(Int.self, forKey: .scoringRevision) ?? 0
         if revision < 1 {
             // Seed-user calibration: 120 min / 8 GB caps made freeze unreachable for
@@ -237,6 +243,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         try container.encode(showOnlyActionable, forKey: .showOnlyActionable)
         try container.encode(favoriteApps, forKey: .favoriteApps)
         try container.encode(scoringRevision, forKey: .scoringRevision)
+        try container.encode(jevReclaimEnabled, forKey: .jevReclaimEnabled)
     }
 }
 

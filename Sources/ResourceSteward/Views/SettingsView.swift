@@ -3,6 +3,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var coordinator: AppCoordinator
+    @State private var apiKeyDraft: String = ""
+    @State private var keyStatus: String = JevKeychain.hasAPIKey ? "已配置（钥匙串）" : "未配置"
 
     var body: some View {
         ScrollView {
@@ -66,6 +68,40 @@ struct SettingsView: View {
                         .controlSize(.small)
                 }
 
+                section("Jev 灰区回收（TypeSafe）") {
+                    Toggle("启用 Jev 灰区判断", isOn: jevEnabledBinding)
+                    Text("默认关闭。开启且配置 API Key 后，仅对通过本地硬门禁的第三方灰区候选调用 TypeSafe Jev；会议/IM/辅助功能/有窗口/常用等本地拒绝项绝不会被覆盖。失败或不确定时按不处理（fail-closed）。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SecureField("TypeSafe API Key", text: $apiKeyDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                    HStack {
+                        Button("保存到钥匙串") {
+                            do {
+                                try JevKeychain.saveAPIKey(apiKeyDraft)
+                                keyStatus = JevKeychain.hasAPIKey ? "已保存（钥匙串）" : "未配置"
+                            } catch {
+                                keyStatus = error.localizedDescription
+                            }
+                        }
+                        .controlSize(.small)
+                        Button("清除 Key") {
+                            _ = JevKeychain.deleteAPIKey()
+                            apiKeyDraft = ""
+                            keyStatus = "未配置"
+                        }
+                        .controlSize(.small)
+                        Spacer()
+                        Text(keyStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("日志子系统：\(JevLog.subsystem)（Console.app 可筛选）。API Key 不会写入日志或 SQLite。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 section("能力边界") {
                     Text("本工具不能压缩其他进程的内存页，也不能获取其他进程的 task port。菜单栏里出现的处理动作只有：降低优先级、冻结、退出。")
                         .font(.caption)
@@ -73,7 +109,7 @@ struct SettingsView: View {
                     Text("退出管家时会自动解冻，并恢复已降低的优先级。若被强制结束，下次启动也会把上次留下的冻结进程恢复。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("数据只保存在本机 SQLite，无网络上传。")
+                    Text("默认仅本机 SQLite。启用 Jev 时会向 api.typesafe.ai 发送灰区候选的结构化状态（不含 API Key）。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("数据库：\(coordinator.store.filePath)")
@@ -83,6 +119,12 @@ struct SettingsView: View {
                 }
             }
             .padding(14)
+            .onAppear {
+                keyStatus = JevKeychain.hasAPIKey ? "已配置（钥匙串）" : "未配置"
+                if apiKeyDraft.isEmpty, JevKeychain.hasAPIKey {
+                    apiKeyDraft = ""
+                }
+            }
         }
     }
 
@@ -145,6 +187,16 @@ struct SettingsView: View {
                 coordinator.settings.weights[keyPath: keyPath] = $0
                 coordinator.persistSettings()
                 coordinator.refresh()
+            }
+        )
+    }
+
+    private var jevEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { coordinator.settings.jevReclaimEnabled },
+            set: {
+                coordinator.settings.jevReclaimEnabled = $0
+                coordinator.persistSettings()
             }
         )
     }
