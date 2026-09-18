@@ -150,6 +150,10 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var scoringRevision: Int
     /// When true and a TypeSafe API key is in Keychain, gray-zone reclaim consults Jev.
     public var jevReclaimEnabled: Bool
+    /// TypeSafe / proxy API host. Path `/v1/systemone` is appended unless already present.
+    public var jevBaseURL: String
+    /// TypeSafe / OpenRouter / gateway model id (e.g. `jev-latest` or `typesafe-ai/jev`).
+    public var jevModel: String
 
     public init(
         authorizationLevel: AuthorizationLevel = .suggestOnly,
@@ -161,7 +165,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
         showOnlyActionable: Bool = false,
         favoriteApps: [FavoriteApp] = [],
         scoringRevision: Int = 1,
-        jevReclaimEnabled: Bool = false
+        jevReclaimEnabled: Bool = false,
+        jevBaseURL: String = JevURLSessionClient.defaultBaseURLString,
+        jevModel: String = JevQuestions.defaultModel
     ) {
         self.authorizationLevel = authorizationLevel
         self.weights = weights
@@ -173,6 +179,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.favoriteApps = favoriteApps
         self.scoringRevision = scoringRevision
         self.jevReclaimEnabled = jevReclaimEnabled
+        self.jevBaseURL = jevBaseURL
+        self.jevModel = jevModel
     }
 
     public static let `default` = AppSettings()
@@ -192,6 +200,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         case favoriteApps
         case scoringRevision
         case jevReclaimEnabled
+        case jevBaseURL
+        case jevModel
     }
 
     public init(from decoder: Decoder) throws {
@@ -216,6 +226,10 @@ public struct AppSettings: Codable, Sendable, Equatable {
         showOnlyActionable = try container.decodeIfPresent(Bool.self, forKey: .showOnlyActionable) ?? false
         favoriteApps = try container.decodeIfPresent([FavoriteApp].self, forKey: .favoriteApps) ?? []
         jevReclaimEnabled = try container.decodeIfPresent(Bool.self, forKey: .jevReclaimEnabled) ?? false
+        jevBaseURL = try container.decodeIfPresent(String.self, forKey: .jevBaseURL)
+            ?? JevURLSessionClient.defaultBaseURLString
+        jevModel = try container.decodeIfPresent(String.self, forKey: .jevModel)
+            ?? JevQuestions.defaultModel
         var revision = try container.decodeIfPresent(Int.self, forKey: .scoringRevision) ?? 0
         if revision < 1 {
             // Seed-user calibration: 120 min / 8 GB caps made freeze unreachable for
@@ -244,6 +258,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         try container.encode(favoriteApps, forKey: .favoriteApps)
         try container.encode(scoringRevision, forKey: .scoringRevision)
         try container.encode(jevReclaimEnabled, forKey: .jevReclaimEnabled)
+        try container.encode(jevBaseURL, forKey: .jevBaseURL)
+        try container.encode(jevModel, forKey: .jevModel)
     }
 }
 
