@@ -4,12 +4,41 @@ public protocol JevClientProtocol: Sendable {
     func evaluate(
         state: JevRequestState,
         apiKey: String,
-        requestID: String
+        requestID: String,
+        endpoint: URL
     ) async throws -> JevClientResult
 }
 
 public struct JevURLSessionClient: JevClientProtocol, Sendable {
-    public static let endpoint = URL(string: "https://api.typesafe.ai/v1/systemone")!
+    public static let defaultBaseURLString = "https://api.typesafe.ai"
+    public static let defaultEndpoint = URL(string: "https://api.typesafe.ai/v1/systemone")!
+
+    /// Resolve a user-configured base URL (or full systemone URL) to the POST endpoint.
+    public static func resolveEndpoint(baseURLString: String) -> URL {
+        let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return defaultEndpoint }
+        var raw = trimmed
+        if !raw.contains("://") {
+            raw = "https://" + raw
+        }
+        guard var components = URLComponents(string: raw) else { return defaultEndpoint }
+        // Allow pasting the full evaluate URL.
+        let path = components.path.lowercased()
+        if path.hasSuffix("/v1/systemone") || path.hasSuffix("/v1/systemone/") {
+            if let url = components.url { return url }
+            return defaultEndpoint
+        }
+        // Treat as API host/base: strip trailing slash and append /v1/systemone.
+        while components.path.hasSuffix("/") {
+            components.path.removeLast()
+        }
+        if components.path.isEmpty || components.path == "/" {
+            components.path = "/v1/systemone"
+        } else {
+            components.path += "/v1/systemone"
+        }
+        return components.url ?? defaultEndpoint
+    }
 
     public var session: URLSession
     public var timeoutSeconds: TimeInterval
@@ -18,7 +47,7 @@ public struct JevURLSessionClient: JevClientProtocol, Sendable {
     public init(
         session: URLSession = .shared,
         timeoutSeconds: TimeInterval = 12,
-        endpoint: URL = JevURLSessionClient.endpoint
+        endpoint: URL = JevURLSessionClient.defaultEndpoint
     ) {
         self.session = session
         self.timeoutSeconds = timeoutSeconds
@@ -28,7 +57,8 @@ public struct JevURLSessionClient: JevClientProtocol, Sendable {
     public func evaluate(
         state: JevRequestState,
         apiKey: String,
-        requestID: String
+        requestID: String,
+        endpoint: URL
     ) async throws -> JevClientResult {
         let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw JevClientError.missingAPIKey }
@@ -207,9 +237,11 @@ public struct JevMockClient: JevClientProtocol, Sendable {
     public func evaluate(
         state: JevRequestState,
         apiKey: String,
-        requestID: String
+        requestID: String,
+        endpoint: URL
     ) async throws -> JevClientResult {
         _ = apiKey
+        _ = endpoint
         onEvaluate?(state)
         switch result {
         case .success(var value):

@@ -213,6 +213,31 @@ enum JevChecks {
 
         check("log subsystem name", JevLog.subsystem == "cc.resourcesteward.jev")
 
+        let defaultEP = JevURLSessionClient.resolveEndpoint(baseURLString: "")
+        check("empty base → default endpoint", defaultEP == JevURLSessionClient.defaultEndpoint)
+        let hostEP = JevURLSessionClient.resolveEndpoint(baseURLString: "https://api.typesafe.ai")
+        check("host base appends systemone", hostEP.absoluteString == "https://api.typesafe.ai/v1/systemone")
+        let proxyEP = JevURLSessionClient.resolveEndpoint(baseURLString: "https://gateway.example.com/typesafe/")
+        check(
+            "proxy base keeps prefix path",
+            proxyEP.absoluteString == "https://gateway.example.com/typesafe/v1/systemone"
+        )
+        let fullEP = JevURLSessionClient.resolveEndpoint(
+            baseURLString: "https://gateway.example.com/v1/systemone"
+        )
+        check("full systemone URL kept", fullEP.absoluteString == "https://gateway.example.com/v1/systemone")
+        let bare = JevURLSessionClient.resolveEndpoint(baseURLString: "api.typesafe.ai")
+        check("bare host gets https", bare.absoluteString == "https://api.typesafe.ai/v1/systemone")
+
+        let decodedBase = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"authorizationLevel":0}"#.utf8)
+        )
+        check(
+            "settings migrate jevBaseURL default",
+            decodedBase.jevBaseURL == JevURLSessionClient.defaultBaseURLString
+        )
+
         return failures
     }
 }

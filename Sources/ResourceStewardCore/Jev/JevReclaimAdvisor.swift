@@ -32,18 +32,21 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     /// Fresh composed decisions keyed by bundle ID.
     private var decisions: [String: Decision] = [:]
     private var apiKeyProvider: () -> String?
+    private var endpoint: URL
     public var isEnabled: Bool
 
     public init(
         enabled: Bool = false,
         client: any JevClientProtocol = JevURLSessionClient(),
         cache: JevCache = JevCache(),
-        apiKeyProvider: @escaping () -> String? = { JevKeychain.loadAPIKey() }
+        apiKeyProvider: @escaping () -> String? = { JevKeychain.loadAPIKey() },
+        baseURLString: String = JevURLSessionClient.defaultBaseURLString
     ) {
         self.isEnabled = enabled
         self.client = client
         self.cache = cache
         self.apiKeyProvider = apiKeyProvider
+        self.endpoint = JevURLSessionClient.resolveEndpoint(baseURLString: baseURLString)
     }
 
     public var isActive: Bool {
@@ -52,6 +55,16 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
 
     public func updateEnabled(_ enabled: Bool) {
         isEnabled = enabled
+    }
+
+    public func updateBaseURL(_ baseURLString: String) {
+        let next = JevURLSessionClient.resolveEndpoint(baseURLString: baseURLString)
+        if next != endpoint {
+            endpoint = next
+            JevLog.info("endpoint_updated url=\(next.absoluteString)")
+        } else {
+            endpoint = next
+        }
     }
 
 
@@ -236,13 +249,13 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         )
 
         JevLog.info(
-            "request_start request_id=\(requestID) bundle=\(key) cache_hit=false state=\(state.app.truncatedSummary) pressure=\(pressure.rawValue)"
+            "request_start request_id=\(requestID) bundle=\(key) endpoint=\(self.endpoint.absoluteString) cache_hit=false state=\(state.app.truncatedSummary) pressure=\(pressure.rawValue)"
         )
 
         Task.detached { [weak self] in
             guard let self else { return }
             do {
-                let result = try await self.client.evaluate(state: state, apiKey: apiKey, requestID: requestID)
+                let result = try await self.client.evaluate(state: state, apiKey: apiKey, requestID: requestID, endpoint: self.endpoint)
                 let composed = JevComposer.compose(result.answers)
                 self.cache.store(
                     bundleID: key,
