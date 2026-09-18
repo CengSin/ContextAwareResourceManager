@@ -720,7 +720,7 @@ public final class AppCoordinator: ObservableObject {
         pressure: MemoryPressureLevel,
         windowOwnerPIDs: Set<Int32>?
     ) -> [ProcessViewModel] {
-        guard settings.jevReclaimEnabled, JevKeychain.hasAPIKey else { return models }
+        guard settings.jevReclaimEnabled, JevAPIKey.hasAPIKey else { return models }
         let groups = Self.grouped(models)
         var actionByBundle: [String: SuggestedAction] = [:]
         for group in groups {

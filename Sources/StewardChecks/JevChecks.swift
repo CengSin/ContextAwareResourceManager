@@ -212,6 +212,10 @@ enum JevChecks {
         check("settings migrate jev default off", decoded.jevReclaimEnabled == false)
 
         check("log subsystem name", JevLog.subsystem == "cc.resourcesteward.jev")
+        // Smoke: once/throttle helpers are callable (no assert on side effects).
+        JevLog.infoOnce(key: "check-once", "check_once_ok")
+        JevLog.infoThrottled(key: "check-throttle", interval: 3600, "check_throttle_ok")
+        check("log helpers callable", true)
 
         let defaultEP = JevURLSessionClient.resolveEndpoint(baseURLString: "")
         check("empty base → default endpoint", defaultEP == JevURLSessionClient.defaultEndpoint)
@@ -255,6 +259,9 @@ enum JevChecks {
             "settings migrate jevModel default",
             decodedBase.jevModel == JevQuestions.defaultModel
         )
+
+        check("api key env var name", JevAPIKey.environmentVariable == "RESOURCE_STEWARD_JEV_API_KEY")
+        check("api key status never empty", !JevAPIKey.statusDescription().isEmpty)
 
         return failures
     }

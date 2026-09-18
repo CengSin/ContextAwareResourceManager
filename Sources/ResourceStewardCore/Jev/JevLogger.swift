@@ -2,31 +2,69 @@ import Foundation
 import os
 
 /// Structured logging for Jev reclaim. Never log API keys or Authorization headers.
+///
+/// File log (`jev-reclaim.log`) is for actionable events only (config, requests, errors).
+/// High-churn hard-gate skips stay on OSLog debug and at most once-per-key on disk.
 public enum JevLog {
     public static let subsystem = "cc.resourcesteward.jev"
     private static let logger = Logger(subsystem: subsystem, category: "reclaim")
     private static let queue = DispatchQueue(label: "cc.resourcesteward.jev.log")
-    /// Mutated only on `queue` — boxed for Swift concurrency checking.
     private static let ringBox = RingBox()
     private static let ringLimit = 400
+    /// Soft cap for on-disk log; oversized files are rotated before append.
+    private static let maxFileBytes: UInt64 = 512_000
 
     private final class RingBox: @unchecked Sendable {
         var lines: [String] = []
+        var onceKeys: Set<String> = []
+        var lastThrottled: [String: Date] = [:]
     }
 
     public static func info(_ message: String) {
         logger.info("\(message, privacy: .public)")
-        append(message)
+        append(message, toFile: true)
     }
 
     public static func error(_ message: String) {
         logger.error("\(message, privacy: .public)")
-        append("ERROR " + message)
+        append("ERROR " + message, toFile: true)
     }
 
+    /// OSLog + ring only — does not grow `jev-reclaim.log`.
     public static func debug(_ message: String) {
         logger.debug("\(message, privacy: .public)")
-        append(message)
+        append(message, toFile: false)
+    }
+
+    /// Persist at most once per process lifetime for `key`.
+    public static func infoOnce(key: String, _ message: String) {
+        let should = queue.sync { () -> Bool in
+            if ringBox.onceKeys.contains(key) { return false }
+            ringBox.onceKeys.insert(key)
+            return true
+        }
+        if should {
+            info(message)
+        } else {
+            debug(message)
+        }
+    }
+
+    /// Persist at most once per `interval` for `key` (default 10 minutes).
+    public static func infoThrottled(key: String, interval: TimeInterval = 600, _ message: String) {
+        let now = Date()
+        let should = queue.sync { () -> Bool in
+            if let last = ringBox.lastThrottled[key], now.timeIntervalSince(last) < interval {
+                return false
+            }
+            ringBox.lastThrottled[key] = now
+            return true
+        }
+        if should {
+            info(message)
+        } else {
+            debug(message)
+        }
     }
 
     public static func recentLines(limit: Int = 80) -> [String] {
@@ -35,7 +73,7 @@ public enum JevLog {
         }
     }
 
-    private static func append(_ message: String) {
+    private static func append(_ message: String, toFile: Bool) {
         let stamp = ISO8601DateFormatter().string(from: Date())
         let line = "\(stamp) \(message)"
         queue.async {
@@ -43,6 +81,7 @@ public enum JevLog {
             if ringBox.lines.count > ringLimit {
                 ringBox.lines.removeFirst(ringBox.lines.count - ringLimit)
             }
+            guard toFile else { return }
             persistLine(line)
         }
     }
@@ -52,6 +91,7 @@ public enum JevLog {
             .appendingPathComponent("ResourceSteward", isDirectory: true) else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("jev-reclaim.log")
+        rotateIfNeeded(url)
         let data = (line + "\n").data(using: .utf8) ?? Data()
         if FileManager.default.fileExists(atPath: url.path) {
             if let handle = try? FileHandle(forWritingTo: url) {
@@ -62,5 +102,14 @@ public enum JevLog {
         } else {
             try? data.write(to: url, options: .atomic)
         }
+    }
+
+    private static func rotateIfNeeded(_ url: URL) {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? UInt64,
+              size >= maxFileBytes else { return }
+        let backup = url.deletingLastPathComponent().appendingPathComponent("jev-reclaim.log.1")
+        try? FileManager.default.removeItem(at: backup)
+        try? FileManager.default.moveItem(at: url, to: backup)
     }
 }
