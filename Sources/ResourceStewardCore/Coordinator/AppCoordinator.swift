@@ -51,6 +51,7 @@ public final class AppCoordinator: ObservableObject {
         self.blacklist = store.loadBlacklist()
         self.jevAdvisor.updateEnabled(self.settings.jevReclaimEnabled)
         self.jevAdvisor.updateBaseURL(self.settings.jevBaseURL)
+        self.jevAdvisor.updateModel(self.settings.jevModel)
         collector = ContextCollector { [weak self] activation in
             Task { @MainActor in
                 self?.handleActivation(activation)
@@ -265,6 +266,7 @@ public final class AppCoordinator: ObservableObject {
         }
         jevAdvisor.updateEnabled(settings.jevReclaimEnabled)
         jevAdvisor.updateBaseURL(settings.jevBaseURL)
+        jevAdvisor.updateModel(settings.jevModel)
         try? store.saveSettings(settings)
         if let timer, abs(timer.timeInterval - settings.sampleIntervalSeconds) > 0.4 {
             timer.invalidate()

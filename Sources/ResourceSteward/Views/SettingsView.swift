@@ -76,10 +76,16 @@ struct SettingsView: View {
                     TextField("Base URL（默认 https://api.typesafe.ai）", text: jevBaseURLBinding)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
-                    Text("可填主机根地址或完整 `/v1/systemone` URL；用于官方 API、自建代理或网关。")
+                    Text("可填主机根地址或完整 `/v1/systemone` URL；用于官方 API、OpenRouter 兼容网关或自建代理。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    SecureField("TypeSafe API Key", text: $apiKeyDraft)
+                    TextField("模型名（默认 jev-latest）", text: jevModelBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                    Text("官方可用 `jev-latest`；经 OpenRouter / AI Gateway 时填对应 id，例如 `typesafe-ai/jev`。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SecureField("API Key（TypeSafe / OpenRouter）", text: $apiKeyDraft)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
                     HStack {
@@ -193,6 +199,27 @@ struct SettingsView: View {
                 coordinator.settings.weights[keyPath: keyPath] = $0
                 coordinator.persistSettings()
                 coordinator.refresh()
+            }
+        )
+    }
+
+
+    private var jevBaseURLBinding: Binding<String> {
+        Binding(
+            get: { coordinator.settings.jevBaseURL },
+            set: {
+                coordinator.settings.jevBaseURL = $0
+                coordinator.persistSettings()
+            }
+        )
+    }
+
+    private var jevModelBinding: Binding<String> {
+        Binding(
+            get: { coordinator.settings.jevModel },
+            set: {
+                coordinator.settings.jevModel = $0
+                coordinator.persistSettings()
             }
         )
     }

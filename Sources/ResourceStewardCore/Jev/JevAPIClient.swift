@@ -5,7 +5,8 @@ public protocol JevClientProtocol: Sendable {
         state: JevRequestState,
         apiKey: String,
         requestID: String,
-        endpoint: URL
+        endpoint: URL,
+        model: String
     ) async throws -> JevClientResult
 }
 
@@ -58,10 +59,13 @@ public struct JevURLSessionClient: JevClientProtocol, Sendable {
         state: JevRequestState,
         apiKey: String,
         requestID: String,
-        endpoint: URL
+        endpoint: URL,
+        model: String
     ) async throws -> JevClientResult {
         let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw JevClientError.missingAPIKey }
+        let modelID = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedModel = modelID.isEmpty ? JevQuestions.defaultModel : modelID
 
         var request = URLRequest(url: endpoint, timeoutInterval: timeoutSeconds)
         request.httpMethod = "POST"
@@ -71,7 +75,7 @@ public struct JevURLSessionClient: JevClientProtocol, Sendable {
 
         let body: [String: Any] = [
             "state": try jsonObject(state),
-            "model": JevQuestions.model,
+            "model": resolvedModel,
             "questions": JevQuestions.payload()
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
@@ -136,7 +140,7 @@ public enum JevResponseParser: Sendable {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw JevClientError.parse("root not object")
         }
-        let model = root["model"] as? String ?? JevQuestions.model
+        let model = root["model"] as? String ?? JevQuestions.defaultModel
         guard let answersObj = root["answers"] as? [String: Any] else {
             throw JevClientError.parse("missing answers")
         }
@@ -238,10 +242,12 @@ public struct JevMockClient: JevClientProtocol, Sendable {
         state: JevRequestState,
         apiKey: String,
         requestID: String,
-        endpoint: URL
+        endpoint: URL,
+        model: String
     ) async throws -> JevClientResult {
         _ = apiKey
         _ = endpoint
+        _ = model
         onEvaluate?(state)
         switch result {
         case .success(var value):

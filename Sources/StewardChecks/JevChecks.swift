@@ -237,6 +237,10 @@ enum JevChecks {
             "settings migrate jevBaseURL default",
             decodedBase.jevBaseURL == JevURLSessionClient.defaultBaseURLString
         )
+        check(
+            "settings migrate jevModel default",
+            decodedBase.jevModel == JevQuestions.defaultModel
+        )
 
         return failures
     }
