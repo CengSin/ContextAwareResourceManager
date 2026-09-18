@@ -58,7 +58,12 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     }
 
     public func updateEnabled(_ enabled: Bool) {
+        let was = isEnabled
         isEnabled = enabled
+        if was != enabled {
+            let source = JevAPIKey.load().source.rawValue
+            JevLog.info("enabled_updated enabled=\(enabled) api_key_source=\(source)")
+        }
     }
 
     public func updateBaseURL(_ baseURLString: String) {
@@ -102,7 +107,10 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     ) -> SuggestedAction {
         guard isActive else { return scorerAction }
         if let (reason, detail) = JevHardGate.skipReason(for: candidate) {
-            JevLog.info("skip hard_gate=\(reason.rawValue) detail=\(detail) bundle=\(candidate.bundleID)")
+            JevLog.infoOnce(
+                key: "hard_gate:\(candidate.bundleID):\(reason.rawValue)",
+                "skip hard_gate=\(reason.rawValue) detail=\(detail) bundle=\(candidate.bundleID)"
+            )
             return scorerAction
         }
         guard scorerAction != .none || scheduleIfNeeded else { return scorerAction }
@@ -124,7 +132,9 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                 requestID: cached.entry.requestID
             )
             withState { decisions[candidate.bundleID] = decision }
-            JevLog.info(
+            JevLog.infoThrottled(
+                key: "cache_hit:\(candidate.bundleID)",
+                interval: 300,
                 "cache_hit bundle=\(candidate.bundleID) request_id=\(cached.entry.requestID) action=\(composed.action.rawValue) rule=\(composed.rule.rawValue)"
             )
             return composed.action
@@ -169,8 +179,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     ) -> SuggestedAction {
         guard isActive else { return scorerAction }
         if let (reason, detail) = JevHardGate.skipReason(for: candidate) {
-            JevLog.info("auto_skip hard_gate=\(reason.rawValue) detail=\(detail) bundle=\(candidate.bundleID)")
-            // Hard-gated candidates should not reach auto; local SceneSwitchPolicy already filters.
+            // Same gate as adjustSuggestion; avoid a second file line every auto tick.
+            JevLog.debug("auto_skip hard_gate=\(reason.rawValue) detail=\(detail) bundle=\(candidate.bundleID)")
             return .none
         }
 
@@ -193,7 +203,10 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         }
 
         if pending {
-            JevLog.info("auto_fail_closed pending bundle=\(candidate.bundleID)")
+            JevLog.infoThrottled(
+                key: "auto_pending:\(candidate.bundleID)",
+                "auto_fail_closed pending bundle=\(candidate.bundleID)"
+            )
             return .none
         }
         if decision == nil,
@@ -203,7 +216,10 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                idleSeconds: idleSeconds,
                memoryMB: memoryMB
            )?.actionFresh != true {
-            JevLog.info("auto_fail_closed no_decision bundle=\(candidate.bundleID)")
+            JevLog.infoThrottled(
+                key: "auto_none:\(candidate.bundleID)",
+                "auto_fail_closed no_decision bundle=\(candidate.bundleID)"
+            )
             return .none
         }
         return adjusted
@@ -237,7 +253,11 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                 inFlight.remove(key)
                 decisions[key] = Decision(action: .none, pending: false)
             }
-            JevLog.error("missing_api_key bundle=\(key)")
+            JevLog.infoThrottled(
+                key: "missing_api_key",
+                interval: 120,
+                "ERROR missing_api_key bundle=\(key)"
+            )
             return
         }
 
