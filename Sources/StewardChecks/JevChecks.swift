@@ -228,6 +228,20 @@ enum JevChecks {
         check("full systemone URL kept", fullEP.absoluteString == "https://gateway.example.com/v1/systemone")
         let bare = JevURLSessionClient.resolveEndpoint(baseURLString: "api.typesafe.ai")
         check("bare host gets https", bare.absoluteString == "https://api.typesafe.ai/v1/systemone")
+        let openRouter = JevURLSessionClient.resolveEndpoint(
+            baseURLString: "https://openrouter.ai/api/alpha/decisions"
+        )
+        check(
+            "openrouter decisions URL kept",
+            openRouter.absoluteString == "https://openrouter.ai/api/alpha/decisions"
+        )
+        let openRouterSlash = JevURLSessionClient.resolveEndpoint(
+            baseURLString: "https://openrouter.ai/api/alpha/decisions/"
+        )
+        check(
+            "openrouter decisions trailing slash normalized",
+            openRouterSlash.absoluteString == "https://openrouter.ai/api/alpha/decisions"
+        )
 
         let decodedBase = try JSONDecoder().decode(
             AppSettings.self,
