@@ -10,11 +10,13 @@ extern "C" {
 
 typedef struct {
     int32_t pid;
+    int32_t ppid;
     uint32_t uid;
     uint64_t phys_footprint_bytes;
     uint64_t resident_bytes;
     uint64_t cpu_time_ns;
     uint64_t start_unix;
+    uint32_t start_usec;
     char name[64];
     char path[1024];
 } RSProcSample;
@@ -45,6 +47,9 @@ int rs_host_memory(RSHostMemory *out);
 
 /// Returns kernel p_stat (SRUN=2, SSLEEP=3, SSTOP=4, …) or -1.
 int rs_process_status(int32_t pid);
+
+/// Copies the process start time. Returns 0 on success, -1 if the pid is gone.
+int rs_process_generation(int32_t pid, uint64_t *start_sec, uint32_t *start_usec);
 
 typedef struct {
     uint64_t user;

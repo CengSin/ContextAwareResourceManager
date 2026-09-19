@@ -48,20 +48,19 @@ public enum JevQuestions: Sendable {
             ],
             "safe_to_reclaim_idle": [
                 "type": "noul",
-                "instructions": "Is it safe to reclaim resources from this idle third-party app right now (throttle/freeze/quit as locally allowed)?",
+                "instructions": "From the app's identity and idle/memory state, is it reasonable to reclaim CPU/memory from this idle third-party app (throttle, freeze, or quit)? Do not judge window-server safety; local code handles that.",
                 "criteria": [
-                    "true": "Idle gray-zone app; reclaiming is unlikely to lose critical state or break connectivity/AV/input.",
+                    "true": "Idle third-party app; reclaiming is unlikely to lose critical state or break connectivity/AV/input.",
                     "false": "Unsafe, uncertain, or user may need it; prefer leaving alone."
                 ]
             ],
             "preferred_action": [
                 "type": "choice",
-                "instructions": "Pick the single best reclaim action for this idle gray-zone candidate. Prefer the mildest effective action; choose none when uncertain.",
+                "instructions": "Pick the single best reclaim action from the app's identity, idle/memory state, and system load. Prefer the mildest effective action; choose none when uncertain. Freeze is disabled — never pick freeze.",
                 "criteria": [
                     "none": "Do nothing: risk, uncertainty, or user likely needs the app.",
-                    "throttle": "Lower CPU priority only; keep process running and responsive enough.",
-                    "freeze": "Pause the process (SIGSTOP) when it has no unsafe windows and freeze is appropriate.",
-                    "quit": "Ask the app to quit when restart is cheap and freeze/throttle are insufficient."
+                    "throttle": "Lower CPU priority only; keep the process running.",
+                    "quit": "Ask the app to quit when restart is cheap and throttle is insufficient."
                 ]
             ]
         ]

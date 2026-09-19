@@ -5,7 +5,10 @@ public enum JevComposer: Sendable {
     public static let riskThreshold = 0.55
     public static let needsSoonThreshold = 0.6
     public static let safeThreshold = 0.65
+    /// Floor to act at all (throttle / display). Freeze and quit need a higher bar.
     public static let confidenceThreshold = 0.7
+    public static let freezeConfidenceThreshold = 0.85
+    public static let quitConfidenceThreshold = 0.85
 
     public static func compose(_ answers: JevEvaluationAnswers) -> JevComposeResult {
         let risk = max(
@@ -31,7 +34,16 @@ public enum JevComposer: Sendable {
         if conf < confidenceThreshold {
             return result(.none, .confidence, risk, needsSoon, safe, conf, choiceRaw)
         }
-        let action = SuggestedAction(rawValue: choiceRaw) ?? .none
+        var action = (SuggestedAction(rawValue: choiceRaw) ?? .none).withoutFreeze()
+        if action == .freeze {
+            action = .throttle
+        }
+        if action == .quit, conf < quitConfidenceThreshold {
+            return result(.throttle, .highStakesConfidence, risk, needsSoon, safe, conf, choiceRaw)
+        }
+        if choiceRaw == "freeze" {
+            return result(.throttle, .actionCeiling, risk, needsSoon, safe, conf, choiceRaw)
+        }
         return result(action, .choice, risk, needsSoon, safe, conf, choiceRaw)
     }
 

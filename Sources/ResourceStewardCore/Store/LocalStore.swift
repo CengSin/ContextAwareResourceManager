@@ -241,24 +241,65 @@ public final class LocalStore: @unchecked Sendable {
         }
     }
 
+    public func loadClassifications() -> [AppClassification] {
+        queue.sync {
+            var rows: [AppClassification] = []
+            try? queryLocked("SELECT payload FROM app_classifications ORDER BY classified_at DESC") { stmt in
+                if let payload = columnText(stmt, 0),
+                   let data = payload.data(using: .utf8),
+                   let item = try? JSONDecoder().decode(AppClassification.self, from: data) {
+                    rows.append(item)
+                }
+            }
+            return rows
+        }
+    }
+
+    public func saveClassification(_ item: AppClassification) throws {
+        let data = try JSONEncoder().encode(item)
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        try queue.sync {
+            try execLocked(
+                """
+                INSERT INTO app_classifications(bundle_id, payload, classified_at)
+                VALUES(?, ?, ?)
+                ON CONFLICT(bundle_id) DO UPDATE SET
+                    payload = excluded.payload,
+                    classified_at = excluded.classified_at
+                """,
+                bind: { stmt in
+                    bindText(stmt, 1, item.bundleID)
+                    bindText(stmt, 2, json)
+                    sqlite3_bind_double(stmt, 3, item.classifiedAt.timeIntervalSince1970)
+                }
+            )
+        }
+    }
+
     public func loadFrozen() -> [FrozenProcess] {
         queue.sync {
             var rows: [FrozenProcess] = []
             try? queryLocked(
-                "SELECT pid, bundle_id, process_name, frozen_at, action FROM frozen_processes ORDER BY frozen_at DESC"
+                "SELECT pid, bundle_id, process_name, frozen_at, action, start_unix, original_nice FROM frozen_processes ORDER BY frozen_at DESC"
             ) { stmt in
                 let pid = sqlite3_column_int(stmt, 0)
                 let bundle = columnText(stmt, 1) ?? ""
                 let name = columnText(stmt, 2) ?? ""
                 let frozenAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
                 let action = SuggestedAction(rawValue: columnText(stmt, 4) ?? "freeze") ?? .freeze
+                let startUnix = sqlite3_column_double(stmt, 5)
+                let originalNice: Int32? = sqlite3_column_type(stmt, 6) == SQLITE_NULL
+                    ? nil
+                    : sqlite3_column_int(stmt, 6)
                 rows.append(
                     FrozenProcess(
                         pid: pid,
                         bundleID: bundle,
                         processName: name,
                         frozenAt: frozenAt,
-                        action: action
+                        action: action,
+                        startUnix: startUnix,
+                        originalNice: originalNice
                     )
                 )
             }
@@ -273,13 +314,19 @@ public final class LocalStore: @unchecked Sendable {
                 try execLocked("DELETE FROM frozen_processes")
                 for item in items {
                     try execLocked(
-                        "INSERT INTO frozen_processes(pid, bundle_id, process_name, frozen_at, action) VALUES(?, ?, ?, ?, ?)",
+                        "INSERT INTO frozen_processes(pid, bundle_id, process_name, frozen_at, action, start_unix, original_nice) VALUES(?, ?, ?, ?, ?, ?, ?)",
                         bind: { stmt in
                             sqlite3_bind_int(stmt, 1, item.pid)
                             bindText(stmt, 2, item.bundleID)
                             bindText(stmt, 3, item.processName)
                             sqlite3_bind_double(stmt, 4, item.frozenAt.timeIntervalSince1970)
                             bindText(stmt, 5, item.action.rawValue)
+                            sqlite3_bind_double(stmt, 6, item.startUnix)
+                            if let nice = item.originalNice {
+                                sqlite3_bind_int(stmt, 7, nice)
+                            } else {
+                                sqlite3_bind_null(stmt, 7)
+                            }
                         }
                     )
                 }
@@ -297,9 +344,9 @@ public final class LocalStore: @unchecked Sendable {
         at: Date = Date(),
         calendar: Calendar = .current
     ) throws {
-        guard WorkspaceMarkov.shouldRecord(from: from, to: to) else { return }
-        let hour = WorkspaceMarkov.hour(of: at, calendar: calendar)
-        let weekday = WorkspaceMarkov.weekday(of: at, calendar: calendar)
+        guard from != to else { return }
+        let hour = calendar.component(.hour, from: at)
+        let weekday = calendar.component(.weekday, from: at)
         try queue.sync {
             try execLocked(
                 """
@@ -437,9 +484,13 @@ public final class LocalStore: @unchecked Sendable {
             bundle_id TEXT,
             process_name TEXT NOT NULL,
             frozen_at REAL NOT NULL,
-            action TEXT NOT NULL
+            action TEXT NOT NULL,
+            start_unix REAL NOT NULL DEFAULT 0,
+            original_nice INTEGER
         );
         """)
+        try? execLocked("ALTER TABLE frozen_processes ADD COLUMN start_unix REAL NOT NULL DEFAULT 0")
+        try? execLocked("ALTER TABLE frozen_processes ADD COLUMN original_nice INTEGER")
         try execLocked("""
         CREATE TABLE IF NOT EXISTS workspace_transitions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -452,6 +503,13 @@ public final class LocalStore: @unchecked Sendable {
         """)
         try execLocked("CREATE INDEX IF NOT EXISTS idx_transitions_from_hour ON workspace_transitions(from_id, hour);")
         try execLocked("CREATE INDEX IF NOT EXISTS idx_transitions_ts ON workspace_transitions(timestamp);")
+        try execLocked("""
+        CREATE TABLE IF NOT EXISTS app_classifications (
+            bundle_id TEXT PRIMARY KEY,
+            payload TEXT NOT NULL,
+            classified_at REAL NOT NULL
+        );
+        """)
     }
 
     private func execLocked(_ sql: String, bind: ((OpaquePointer) -> Void)? = nil) throws {

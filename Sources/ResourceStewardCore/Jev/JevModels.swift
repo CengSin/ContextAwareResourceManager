@@ -61,7 +61,7 @@ public struct JevPolicyHint: Codable, Sendable, Equatable {
 
     public init(
         hard_gates_passed: Bool = true,
-        note: String = "Local code already refused VPN, meeting, IM, a11y, windowed, and keep-alive apps."
+        note: String = "Local code already refused VPN, meeting, IM, a11y, keep-alive, and system processes. Freeze is disabled. Window ownership is in app.owns_windows as a fact only."
     ) {
         self.hard_gates_passed = hard_gates_passed
         self.note = note
@@ -133,7 +133,9 @@ public enum JevComposeRule: String, Sendable, Equatable {
     case needsSoon = "needs_soon"
     case safeThreshold = "safe_threshold"
     case confidence
+    case highStakesConfidence = "high_stakes_confidence"
     case choice
+    case actionCeiling = "action_ceiling"
 }
 
 public struct JevComposeResult: Sendable, Equatable {

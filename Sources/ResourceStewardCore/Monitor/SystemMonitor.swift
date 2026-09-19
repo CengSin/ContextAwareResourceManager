@@ -14,6 +14,7 @@ public final class SystemMonitor: @unchecked Sendable {
     private var lastGPUSampleAt: Date = .distantPast
     /// Counts hardware GPU samples (not cache hits). Useful for StewardChecks.
     public private(set) var gpuHardwareSampleCount = 0
+    private var previousProcessCPU: [Int32: (timeNs: UInt64, sampledAt: Date)] = [:]
 
     public init() {}
 
@@ -48,11 +49,13 @@ public final class SystemMonitor: @unchecked Sendable {
         return buffer.prefix(Int(count)).map { sample in
             RawProcessSample(
                 pid: sample.pid,
+                parentPID: sample.ppid,
                 uid: sample.uid,
                 physFootprintBytes: sample.phys_footprint_bytes,
                 residentBytes: sample.resident_bytes,
                 cpuTimeNs: sample.cpu_time_ns,
                 startUnix: sample.start_unix,
+                startUsec: sample.start_usec,
                 name: stringFromCChar(sample.name),
                 path: stringFromCChar(sample.path)
             )
@@ -64,32 +67,29 @@ public final class SystemMonitor: @unchecked Sendable {
         Int(rs_process_status(pid))
     }
 
+    public static func processGeneration(pid: Int32) -> ProcessGeneration? {
+        var sec: UInt64 = 0
+        var usec: UInt32 = 0
+        guard rs_process_generation(pid, &sec, &usec) == 0 else { return nil }
+        return ProcessGeneration(pid: pid, startUnix: TimeInterval(sec) + TimeInterval(usec) / 1_000_000)
+    }
+
     public func sampleCPU() -> HostCPU {
         var current = RSHostCPUTicks()
         guard rs_host_cpu_ticks(&current) == 0 else { return .empty }
 
         lock.lock()
         let previous = previousCPU
-        if previous == nil {
-            lock.unlock()
-            usleep(120_000)
-            var second = RSHostCPUTicks()
-            guard rs_host_cpu_ticks(&second) == 0 else { return .empty }
-            lock.lock()
-            previousCPU = second
-            lock.unlock()
-            return HostCPU.fromTicks(
-                previousUser: current.user, previousSystem: current.system,
-                previousIdle: current.idle, previousNice: current.nice,
-                currentUser: second.user, currentSystem: second.system,
-                currentIdle: second.idle, currentNice: second.nice
-            )
-        }
         previousCPU = current
         lock.unlock()
+        guard let previous else {
+            // First tick has no delta. Do not usleep on the caller thread
+            // (refresh used to sleep 120ms on the main thread).
+            return .empty
+        }
         return HostCPU.fromTicks(
-            previousUser: previous!.user, previousSystem: previous!.system,
-            previousIdle: previous!.idle, previousNice: previous!.nice,
+            previousUser: previous.user, previousSystem: previous.system,
+            previousIdle: previous.idle, previousNice: previous.nice,
             currentUser: current.user, currentSystem: current.system,
             currentIdle: current.idle, currentNice: current.nice
         )
@@ -135,6 +135,24 @@ public final class SystemMonitor: @unchecked Sendable {
         gpuHardwareSampleCount += 1
         lock.unlock()
         return sampled
+    }
+
+    public func cpuPercent(pid: Int32, cpuTimeNs: UInt64, now: Date) -> Double {
+        lock.lock()
+        let previous = previousProcessCPU[pid]
+        previousProcessCPU[pid] = (cpuTimeNs, now)
+        lock.unlock()
+        guard let previous else { return 0 }
+        let dt = now.timeIntervalSince(previous.sampledAt)
+        guard dt > 0.2, cpuTimeNs >= previous.timeNs else { return 0 }
+        let dCPU = Double(cpuTimeNs - previous.timeNs) / 1_000_000_000.0
+        return max(0, (dCPU / dt) * 100)
+    }
+
+    public func pruneProcessCPU(livePIDs: Set<Int32>) {
+        lock.lock()
+        previousProcessCPU = previousProcessCPU.filter { livePIDs.contains($0.key) }
+        lock.unlock()
     }
 
     public static func median(_ values: [Double]) -> Double {

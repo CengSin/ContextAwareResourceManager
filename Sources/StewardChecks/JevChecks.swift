@@ -24,7 +24,36 @@ enum JevChecks {
             preferredAction: JevChoiceAnswer(choice: "freeze", confidence: 0.85)
         )
         let composedSafe = JevComposer.compose(safeFreeze)
-        check("compose chooses freeze when safe", composedSafe.action == .freeze && composedSafe.rule == .choice)
+        check("compose freeze is retired to throttle", composedSafe.action == .throttle)
+
+        let midFreeze = JevEvaluationAnswers(
+            looksLikeNetworkOrSync: 0.1,
+            looksLikeCommunication: 0.1,
+            looksLikeInputOrA11y: 0.05,
+            looksLikeAVOrCapture: 0.05,
+            userLikelyNeedsSoon: 0.2,
+            safeToReclaimIdle: 0.9,
+            preferredAction: JevChoiceAnswer(choice: "freeze", confidence: 0.75)
+        )
+        let composedMidFreeze = JevComposer.compose(midFreeze)
+        check(
+            "compose freeze at 0.75 → throttle",
+            composedMidFreeze.action == .throttle
+        )
+
+        let midQuit = JevEvaluationAnswers(
+            looksLikeNetworkOrSync: 0.1,
+            looksLikeCommunication: 0.1,
+            looksLikeInputOrA11y: 0.05,
+            looksLikeAVOrCapture: 0.05,
+            userLikelyNeedsSoon: 0.2,
+            safeToReclaimIdle: 0.9,
+            preferredAction: JevChoiceAnswer(choice: "quit", confidence: 0.8)
+        )
+        check(
+            "compose quit below 0.85 → throttle",
+            JevComposer.compose(midQuit).action == .throttle && JevComposer.compose(midQuit).rule == .highStakesConfidence
+        )
 
         let highRisk = JevEvaluationAnswers(
             looksLikeNetworkOrSync: 0.8,
@@ -134,10 +163,7 @@ enum JevChecks {
             windowOwnerPIDs: [2]
         )
         let notesReason = JevHardGate.skipReason(for: notes)?.0
-        check(
-            "notes hard-gated",
-            notesReason == .ownsWindows || notesReason == .categoryBan
-        )
+        check("notes hard-gated", notesReason == .categoryBan)
         _ = advisor.adjustSuggestion(
             scorerAction: .freeze,
             candidate: notes,
@@ -164,6 +190,135 @@ enum JevChecks {
             windowOwnerPIDs: []
         )
         check("sublime is gray-zone", JevHardGate.isGrayZone(sublime))
+        check(
+            "headless sublime freeze clamped to throttle",
+            JevHardGate.clampAction(.freeze, for: sublime) == .throttle
+        )
+
+        let windowedSublime = JevHardGate.Candidate(
+            pid: 4,
+            bundleID: "com.sublimetext.4",
+            processName: "Sublime Text",
+            path: "/Applications/Sublime Text.app",
+            isForeground: false,
+            isAccessory: false,
+            isRegularApp: true,
+            ownsWindows: true,
+            inCurrentWorkspace: false,
+            isProtected: false,
+            windowOwnerPIDs: [4]
+        )
+        check("windowed sublime is gray-zone", JevHardGate.isGrayZone(windowedSublime))
+        check("windowed sublime consult not skipped", JevHardGate.skipReason(for: windowedSublime) == nil)
+        check(
+            "windowed sublime freeze clamped to throttle",
+            JevHardGate.clampAction(.freeze, for: windowedSublime) == .throttle
+        )
+        check(
+            "windowed sublime quit not clamped",
+            JevHardGate.clampAction(.quit, for: windowedSublime) == .quit
+        )
+        check("policy hint names owns_windows field", JevPolicyHint().note.contains("owns_windows"))
+        check("policy hint does not treat windowed as consult skip", !JevPolicyHint().note.contains("refused VPN, meeting, IM, a11y, windowed"))
+        check("policy hint says freeze disabled", JevPolicyHint().note.lowercased().contains("freeze"))
+
+        check("chrome is third-party", InstalledAppCatalog.isThirdParty(bundleID: "com.google.Chrome"))
+        check("safari is not third-party", !InstalledAppCatalog.isThirdParty(bundleID: "com.apple.Safari"))
+        check("self app is not third-party", !InstalledAppCatalog.isThirdParty(bundleID: "cc.resourcesteward.app"))
+
+        check(
+            "stale jev keep needs reclassify",
+            AppClassification(
+                bundleID: "com.google.Chrome",
+                name: "Chrome",
+                path: "/Applications/Google Chrome.app",
+                policy: .keep,
+                source: .jev,
+                schemaVersion: 1
+            ).needsReclassify
+        )
+        check(
+            "current jev class does not need reclassify",
+            !AppClassification(
+                bundleID: "com.google.Chrome",
+                name: "Chrome",
+                path: "/Applications/Google Chrome.app",
+                policy: .quit,
+                source: .jev
+            ).needsReclassify
+        )
+
+        check(
+            "batch compose keep",
+            JevBatchComposer.compose(choice: "keep", confidence: 0.9) == .none
+        )
+        check(
+            "batch compose throttle",
+            JevBatchComposer.compose(choice: "throttle", confidence: 0.8) == .throttle
+        )
+        check(
+            "batch compose quit high conf",
+            JevBatchComposer.compose(choice: "quit", confidence: 0.9) == .quit
+        )
+        check(
+            "batch compose quit mid conf → throttle",
+            JevBatchComposer.compose(choice: "quit", confidence: 0.8) == .throttle
+        )
+        check(
+            "batch compose freeze → throttle",
+            JevBatchComposer.compose(choice: "freeze", confidence: 0.95) == .throttle
+        )
+        check(
+            "batch compose low conf → keep",
+            JevBatchComposer.compose(choice: "throttle", confidence: 0.4) == .none
+        )
+        let batchApps = JevBatchQuestions.capped([
+            JevGrayApp(index: 0, bundle_id: "com.google.Chrome", name: "Chrome", idle_seconds: 400, memory_mb: 1800, cpu_percent: 1, owns_windows: true),
+            JevGrayApp(index: 1, bundle_id: "io.masscode.app", name: "massCode", idle_seconds: 800, memory_mb: 200, cpu_percent: 0.2, owns_windows: true)
+        ])
+        check("batch caps preserve memory order", batchApps.first?.bundle_id == "com.google.Chrome")
+        let parsed = JevBatchQuestions.parse(
+            answers: [
+                "app_0": ["choice": "quit", "confidence": 0.92],
+                "app_1": ["choice": "keep", "confidence": 0.8]
+            ],
+            apps: batchApps
+        )
+        check("batch parse chrome quit", parsed["com.google.Chrome"] == .quit)
+        check("batch parse mass keep", parsed["io.masscode.app"] == SuggestedAction.none)
+        let wechatCandidate = JevHardGate.Candidate(
+            pid: 9,
+            bundleID: "com.tencent.xinWeChat",
+            processName: "WeChat",
+            isForeground: false,
+            isAccessory: false,
+            isRegularApp: true,
+            ownsWindows: true,
+            inCurrentWorkspace: false,
+            isProtected: false
+        )
+        let golandBackground = JevHardGate.Candidate(
+            pid: 10,
+            bundleID: "com.jetbrains.goland",
+            processName: "GoLand",
+            path: "/Applications/GoLand.app",
+            isForeground: false,
+            isAccessory: false,
+            isRegularApp: true,
+            ownsWindows: true,
+            inCurrentWorkspace: true,
+            isProtected: false
+        )
+        check("wechat is not gray-zone", !JevHardGate.isGrayZone(wechatCandidate))
+        check("workspace core is no longer a consult skip", JevHardGate.isGrayZone(golandBackground))
+        check(
+            "gray zone helper skips empty groups",
+            JevGrayZone.apps(
+                groups: [],
+                favorites: [],
+                windowOwnerPIDs: []
+            ).isEmpty
+        )
 
         // Response parser
         let json = """
@@ -186,10 +341,10 @@ enum JevChecks {
           "usage": {"input_tokens": 100, "output_tokens": 20}
         }
         """.data(using: .utf8)!
-        let parsed = try JevResponseParser.parse(data: json, requestID: "r1", httpStatus: 200, latencyMs: 12)
-        check("parser model", parsed.model == "jev-1.13.0")
-        check("parser preferred freeze", parsed.answers.preferredAction.choice == "freeze")
-        check("parser usage tokens", parsed.usage.inputTokens == 100 && parsed.usage.outputTokens == 20)
+        let parsedResponse = try JevResponseParser.parse(data: json, requestID: "r1", httpStatus: 200, latencyMs: 12)
+        check("parser model", parsedResponse.model == "jev-1.13.0")
+        check("parser preferred freeze", parsedResponse.answers.preferredAction.choice == "freeze")
+        check("parser usage tokens", parsedResponse.usage.inputTokens == 100 && parsedResponse.usage.outputTokens == 20)
 
         // Mock error → fail-closed decision path via composer already tested; incomplete parse
         do {

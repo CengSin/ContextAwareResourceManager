@@ -26,6 +26,21 @@ public enum WorkspaceAppEligibility: Sendable {
 }
 
 public enum RunningAppCatalog {
+    public static func processHints() -> [AppProcessHint] {
+        NSWorkspace.shared.runningApplications.compactMap { app in
+            guard app.processIdentifier > 0 else { return nil }
+            return AppProcessHint(
+                pid: app.processIdentifier,
+                bundleID: app.bundleIdentifier,
+                name: app.localizedName ?? "",
+                bundlePath: app.bundleURL?.path ?? "",
+                executablePath: app.executableURL?.path ?? "",
+                isRegularApp: app.activationPolicy == .regular,
+                isAccessory: app.activationPolicy == .accessory
+            )
+        }
+    }
+
     public static func collect(currentUID _: uid_t) -> [RunningAppInfo] {
         var apps: [String: RunningAppInfo] = [:]
 

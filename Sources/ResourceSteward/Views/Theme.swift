@@ -37,23 +37,35 @@ enum Theme {
     }
 }
 
-@MainActor
 enum AppIconCache {
-    private static var images: [String: NSImage] = [:]
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var images: [String: NSImage] = [:]
+    private static let queue = DispatchQueue(label: "cc.resourcesteward.icons", qos: .userInitiated)
 
     static func cached(_ path: String) -> NSImage? {
-        images[path]
+        lock.lock()
+        defer { lock.unlock() }
+        return images[path]
     }
 
-    /// Yield first so tab highlighting can paint before `icon(forFile:)` hits disk.
+    /// Load off the main thread. `icon(forFile:)` hits disk; doing it on MainActor
+    /// (主线程，处理点击和滚动的那条线程) stalls the menu.
     static func load(_ path: String) async -> NSImage {
-        if let cached = images[path] { return cached }
-        await Task.yield()
-        if let cached = images[path] { return cached }
-        let icon = NSWorkspace.shared.icon(forFile: path)
-        icon.size = NSSize(width: 64, height: 64)
-        images[path] = icon
-        return icon
+        if let cached = cached(path) { return cached }
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                if let cached = cached(path) {
+                    continuation.resume(returning: cached)
+                    return
+                }
+                let icon = NSWorkspace.shared.icon(forFile: path)
+                icon.size = NSSize(width: 64, height: 64)
+                lock.lock()
+                images[path] = icon
+                lock.unlock()
+                continuation.resume(returning: icon)
+            }
+        }
     }
 }
 

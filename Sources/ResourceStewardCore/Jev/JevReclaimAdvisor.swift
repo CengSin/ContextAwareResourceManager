@@ -31,6 +31,11 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     private var inFlight: Set<String> = []
     /// Fresh composed decisions keyed by bundle ID.
     private var decisions: [String: Decision] = [:]
+    private var batchInFlight = false
+    private var lastBatch = JevBatchSnapshot.empty
+    private var lastBatchAt = Date.distantPast
+    public static let batchMinInterval: TimeInterval = 20
+    public static let batchTTL: TimeInterval = 180
     private var apiKeyProvider: () -> String?
     private var endpoint: URL
     private var model: String
@@ -124,20 +129,21 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         ), cached.actionFresh {
             let answers = cached.entry.answers.toAnswers()
             let composed = JevComposer.compose(answers)
+            let action = finalize(composed.action, candidate: candidate, rule: composed.rule)
             let decision = Decision(
-                action: composed.action,
+                action: action,
                 fromCache: true,
                 pending: false,
-                rule: composed.rule,
+                rule: action == composed.action ? composed.rule : .actionCeiling,
                 requestID: cached.entry.requestID
             )
             withState { decisions[candidate.bundleID] = decision }
             JevLog.infoThrottled(
                 key: "cache_hit:\(candidate.bundleID)",
                 interval: 300,
-                "cache_hit bundle=\(candidate.bundleID) request_id=\(cached.entry.requestID) action=\(composed.action.rawValue) rule=\(composed.rule.rawValue)"
+                "cache_hit bundle=\(candidate.bundleID) request_id=\(cached.entry.requestID) action=\(action.rawValue) rule=\(decision.rule?.rawValue ?? composed.rule.rawValue)"
             )
-            return composed.action
+            return action
         }
 
         let (existing, pending) = withState {
@@ -145,7 +151,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         }
 
         if let existing, !existing.pending {
-            return existing.action
+            return finalize(existing.action, candidate: candidate, rule: existing.rule)
         }
 
         if scheduleIfNeeded {
@@ -222,7 +228,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
             )
             return .none
         }
-        return adjusted
+        return finalize(adjusted, candidate: candidate, rule: decision?.rule)
     }
 
     public func knownDecision(bundleID: String) -> Decision? {
@@ -292,29 +298,42 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
             do {
                 let result = try await self.client.evaluate(state: state, apiKey: apiKey, requestID: requestID, endpoint: self.endpoint, model: self.model)
                 let composed = JevComposer.compose(result.answers)
+                let action = self.finalize(composed.action, candidate: candidate, rule: composed.rule)
+                var stored = composed
+                if action != composed.action {
+                    stored = JevComposeResult(
+                        action: action,
+                        rule: .actionCeiling,
+                        risk: composed.risk,
+                        needsSoon: composed.needsSoon,
+                        safeToReclaim: composed.safeToReclaim,
+                        preferredConfidence: composed.preferredConfidence,
+                        preferredChoice: composed.preferredChoice
+                    )
+                }
                 self.cache.store(
                     bundleID: key,
                     pressureBucket: pressure.rawValue,
                     idleSeconds: idleSeconds,
                     memoryMB: memoryMB,
                     answers: result.answers,
-                    composed: composed,
+                    composed: stored,
                     model: result.model,
                     requestID: result.requestID
                 )
                 self.withState {
                     self.inFlight.remove(key)
                     self.decisions[key] = Decision(
-                        action: composed.action,
+                        action: action,
                         fromCache: false,
                         pending: false,
-                        rule: composed.rule,
+                        rule: stored.rule,
                         requestID: result.requestID
                     )
                 }
                 let tokens = "in=\(result.usage.inputTokens.map(String.init) ?? "?") out=\(result.usage.outputTokens.map(String.init) ?? "?")"
                 JevLog.info(
-                    "request_ok request_id=\(result.requestID) bundle=\(key) status=\(result.httpStatus) latency_ms=\(result.latencyMs) usage=\(tokens) noul_network=\(fmt(result.answers.looksLikeNetworkOrSync)) noul_comm=\(fmt(result.answers.looksLikeCommunication)) noul_input=\(fmt(result.answers.looksLikeInputOrA11y)) noul_av=\(fmt(result.answers.looksLikeAVOrCapture)) noul_needs=\(fmt(result.answers.userLikelyNeedsSoon)) noul_safe=\(fmt(result.answers.safeToReclaimIdle)) choice=\(result.answers.preferredAction.choice) conf=\(fmt(result.answers.preferredAction.confidence)) composed=\(composed.action.rawValue) rule=\(composed.rule.rawValue)"
+                    "request_ok request_id=\(result.requestID) bundle=\(key) status=\(result.httpStatus) latency_ms=\(result.latencyMs) usage=\(tokens) noul_network=\(fmt(result.answers.looksLikeNetworkOrSync)) noul_comm=\(fmt(result.answers.looksLikeCommunication)) noul_input=\(fmt(result.answers.looksLikeInputOrA11y)) noul_av=\(fmt(result.answers.looksLikeAVOrCapture)) noul_needs=\(fmt(result.answers.userLikelyNeedsSoon)) noul_safe=\(fmt(result.answers.safeToReclaimIdle)) choice=\(result.answers.preferredAction.choice) conf=\(fmt(result.answers.preferredAction.confidence)) composed=\(composed.action.rawValue) action=\(action.rawValue) rule=\(stored.rule.rawValue)"
                 )
             } catch let error as JevClientError {
                 self.withState {
@@ -334,6 +353,165 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                 )
             }
         }
+    }
+
+    public func knownBatchActions() -> [String: SuggestedAction] {
+        withState { lastBatch.actions }
+    }
+
+    public func latestBatch() -> JevBatchSnapshot {
+        withState { lastBatch }
+    }
+
+    /// Load + gray-zone running apps in one Jev request. Fail-closed while pending.
+    public func syncBatch(
+        load: JevLoadState,
+        apps: [JevGrayApp],
+        scheduleIfNeeded: Bool = true
+    ) -> JevBatchSnapshot {
+        guard isActive else { return .empty }
+        let capped = JevBatchQuestions.capped(apps)
+        let signature = JevBatchQuestions.signature(load: load, apps: capped)
+        if capped.isEmpty {
+            let empty = JevBatchSnapshot(signature: signature)
+            withState { lastBatch = empty }
+            return empty
+        }
+
+        let (cached, flying) = withState { () -> (JevBatchSnapshot?, Bool) in
+            if lastBatch.signature == signature, !lastBatch.pending, !lastBatch.actions.isEmpty {
+                if Date().timeIntervalSince(lastBatchAt) < Self.batchTTL {
+                    return (lastBatch, batchInFlight)
+                }
+            }
+            return (nil, batchInFlight)
+        }
+        if let cached { return cached }
+        if flying {
+            return withState {
+                JevBatchSnapshot(
+                    signature: signature,
+                    actions: lastBatch.actions,
+                    pending: true,
+                    requestID: lastBatch.requestID
+                )
+            }
+        }
+        if scheduleIfNeeded {
+            scheduleBatch(load: load, apps: capped, signature: signature)
+        }
+        return withState {
+            JevBatchSnapshot(
+                signature: signature,
+                actions: lastBatch.signature == signature ? lastBatch.actions : [:],
+                pending: true,
+                requestID: lastBatch.requestID
+            )
+        }
+    }
+
+    private func scheduleBatch(load: JevLoadState, apps: [JevGrayApp], signature: String) {
+        let tooSoon = withState { () -> Bool in
+            if batchInFlight { return true }
+            if Date().timeIntervalSince(lastBatchAt) < Self.batchMinInterval,
+               lastBatch.signature == signature {
+                return true
+            }
+            batchInFlight = true
+            lastBatch = JevBatchSnapshot(
+                signature: signature,
+                actions: lastBatch.actions,
+                pending: true
+            )
+            return false
+        }
+        if tooSoon { return }
+
+        guard let apiKey = apiKeyProvider(), !apiKey.isEmpty else {
+            withState {
+                batchInFlight = false
+                lastBatch = JevBatchSnapshot(signature: signature)
+            }
+            JevLog.infoThrottled(key: "missing_api_key", interval: 120, "ERROR missing_api_key batch")
+            return
+        }
+
+        let requestID = UUID().uuidString
+        let state = JevBatchRequestState(system: load, apps: apps)
+        JevLog.info(
+            "request_start request_id=\(requestID) batch apps=\(apps.count) pressure=\(load.memory_pressure) cpu=\(Int(load.cpu_percent)) signature=\(signature)"
+        )
+
+        let client = self.client
+        let endpoint = self.endpoint
+        let model = self.model
+        Task.detached { [weak self] in
+            guard let self else { return }
+            do {
+                let stateJSON = try JSONEncoder().encode(state)
+                let questionsJSON = try JSONSerialization.data(
+                    withJSONObject: JevBatchQuestions.payload(appCount: apps.count)
+                )
+                let payload = try await client.evaluatePayload(
+                    stateJSON: stateJSON,
+                    questionsJSON: questionsJSON,
+                    apiKey: apiKey,
+                    requestID: requestID,
+                    endpoint: endpoint,
+                    model: model
+                )
+                let actions = try JevBatchQuestions.parseJSON(payload.answersJSON, apps: apps)
+                self.withState {
+                    self.batchInFlight = false
+                    self.lastBatchAt = Date()
+                    self.lastBatch = JevBatchSnapshot(
+                        signature: signature,
+                        actions: actions,
+                        pending: false,
+                        requestID: payload.requestID
+                    )
+                    for (bundle, action) in actions {
+                        self.decisions[bundle] = Decision(
+                            action: action,
+                            fromCache: false,
+                            pending: false,
+                            rule: .choice,
+                            requestID: payload.requestID
+                        )
+                    }
+                }
+                let summary = actions.map { "\($0.key)=\($0.value.rawValue)" }.sorted().joined(separator: ",")
+                JevLog.info(
+                    "request_ok request_id=\(payload.requestID) batch status=\(payload.httpStatus) latency_ms=\(payload.latencyMs) actions=\(summary)"
+                )
+            } catch {
+                self.withState {
+                    self.batchInFlight = false
+                    self.lastBatchAt = Date()
+                    self.lastBatch = JevBatchSnapshot(signature: signature, pending: false)
+                }
+                JevLog.error(
+                    "request_fail request_id=\(requestID) batch message=\(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
+    /// Re-apply the freeze ceiling on every read: window state can change after a cached Jev answer.
+    private func finalize(
+        _ action: SuggestedAction,
+        candidate: JevHardGate.Candidate,
+        rule: JevComposeRule? = nil
+    ) -> SuggestedAction {
+        let clamped = JevHardGate.clampAction(action, for: candidate)
+        if clamped != action {
+            let reason = JevHardGate.freezeCeilingReason(for: candidate)
+            JevLog.infoThrottled(
+                key: "ceiling:\(candidate.bundleID)",
+                "action_ceiling bundle=\(candidate.bundleID) composed=\(action.rawValue) clamped=\(clamped.rawValue) reason=\(reason?.1 ?? "owns_windows") prior_rule=\(rule?.rawValue ?? "-")"
+            )
+        }
+        return clamped
     }
 
     private func pressureBucketName(_ pressure: MemoryPressureLevel) -> String {

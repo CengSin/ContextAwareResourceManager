@@ -15,7 +15,12 @@ struct MenuBarPanel: View {
                     OnboardingView()
                 }
             }
-            if let pending = coordinator.pendingAction {
+            if let batch = coordinator.pendingBatch {
+                Color.black.opacity(0.32)
+                    .ignoresSafeArea()
+                ConfirmBatchCard(batch: batch)
+                    .padding(18)
+            } else if let pending = coordinator.pendingAction {
                 Color.black.opacity(0.32)
                     .ignoresSafeArea()
                 ConfirmActionCard(pending: pending)
@@ -31,7 +36,6 @@ struct MenuBarPanel: View {
             Divider()
             ZStack {
                 tabPane(.processes) { ProcessListView() }
-                tabPane(.workspaces) { WorkspaceEditorView() }
                 tabPane(.favorites) { FavoriteAppsView() }
                 tabPane(.settings) { SettingsView() }
             }
@@ -47,7 +51,7 @@ struct MenuBarPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("场景资源管家")
+                    Text("资源管家")
                         .font(.headline)
                     HStack(spacing: 6) {
                         Circle()
@@ -68,7 +72,7 @@ struct MenuBarPanel: View {
                                 .padding(.vertical, 1)
                                 .background(Color.accentColor.opacity(0.16), in: Capsule())
                         }
-                        Text(coordinator.match.displayName)
+                        Text(coordinator.settings.authorizationLevel == .sceneSwitch ? "半自动" : "仅建议")
                             .font(.subheadline.weight(.semibold))
                     }
                     Text(coordinator.autoStatusText.isEmpty ? matchCaption : coordinator.autoStatusText)
@@ -97,7 +101,7 @@ struct MenuBarPanel: View {
                 MemoryStat(title: "Swap", value: ByteFormat.string(coordinator.hostMemory.swapUsedBytes))
             }
 
-            Text("冻结或退出后，内存由系统自然回收。下列「预计」不是本工具直接压缩的结果。")
+            Text("退出后内存由系统自然回收。下列「预计」只统计建议退出的占用，不是本工具直接压缩的结果。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -130,7 +134,7 @@ struct MenuBarPanel: View {
                 Image(systemName: "power")
             }
             .buttonStyle(.borderless)
-            .help("退出场景管家（会自动解冻）")
+            .help("退出管家（会自动解冻）")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -183,20 +187,50 @@ struct MenuBarPanel: View {
     }
 
     private var matchCaption: String {
-        if coordinator.match.isUnclassified {
-            if coordinator.workspaces.isEmpty {
-                return "先在「场景」里定义工作场景"
+        if coordinator.settings.jevReclaimEnabled {
+            return "按系统负载与正在运行的灰区 App 询问 Jev"
+        }
+        return "启用 Jev 后才会按负载给出建议"
+    }
+}
+
+private struct ConfirmBatchCard: View {
+    @EnvironmentObject private var coordinator: AppCoordinator
+    let batch: PendingDecisionBatch
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Jev 建议按当前负载处理这些应用")
+                .font(.headline)
+            Text("降低优先级不会回收内存；退出才会让系统回收占用。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(batch.items) { item in
+                    HStack {
+                        Text(item.group.displayName)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(item.action.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.actionColor(item.action))
+                    }
+                }
             }
-            return String(format: "证据 %.1f，不足以定性", coordinator.match.similarity)
+            HStack {
+                Button("暂不处理", action: coordinator.cancelPendingBatch)
+                Spacer()
+                Button("确认执行", action: coordinator.confirmPendingBatch)
+                    .buttonStyle(.borderedProminent)
+                    .tint(batch.items.contains(where: { $0.action == .quit }) ? .red : .accentColor)
+            }
         }
-        if let top = coordinator.forecasts.first, coordinator.forecastSampleCount >= 3, top.probability >= 0.2 {
-            return String(
-                format: "证据 %.1f · 此时常切到「%@」",
-                coordinator.match.similarity,
-                top.name
-            )
-        }
-        return String(format: "证据 %.1f · %d 个近期 App", coordinator.match.similarity, coordinator.match.activeBundleIDs.count)
+        .padding(16)
+        .frame(maxWidth: 360)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
     }
 }
 

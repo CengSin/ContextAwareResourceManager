@@ -18,10 +18,24 @@ public struct ActionResult: Sendable, Equatable {
 }
 
 public final class ActionExecutor: @unchecked Sendable {
+    private struct ThrottleRecord: Sendable {
+        var pid: Int32
+        var startUnix: TimeInterval
+        var originalNice: Int32
+        var bundleID: String
+        var processName: String
+
+        var generation: ProcessGeneration {
+            ProcessGeneration(pid: pid, startUnix: startUnix)
+        }
+    }
+
     private let lock = NSLock()
     private var frozen: [Int32: FrozenProcess] = [:]
-    private var throttled: Set<Int32> = []
+    private var throttled: [Int32: ThrottleRecord] = [:]
     private let currentUID = getuid()
+    /// Test seam. `nil` means ask the kernel.
+    public var lookupGeneration: ((Int32) -> ProcessGeneration?)?
     public var extraKeepAliveBundleIDs: Set<String> = []
     /// Tick-scoped window-owner PID set from `AppCoordinator.refresh`.
     /// When `reuseWindowOwnerPIDs` is true, freeze-safety uses this value as-is
@@ -72,39 +86,60 @@ public final class ActionExecutor: @unchecked Sendable {
     public func isThrottled(pid: Int32) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return throttled.contains(pid)
+        return throttled[pid] != nil
+    }
+
+    public func originalNice(pid: Int32) -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        return throttled[pid]?.originalNice
     }
 
     public func appliedAction(pid: Int32) -> SuggestedAction? {
         lock.lock()
         defer { lock.unlock() }
         if frozen[pid] != nil { return .freeze }
-        if throttled.contains(pid) { return .throttle }
+        if throttled[pid] != nil { return .throttle }
         return nil
     }
 
     public func prune(livePIDs: Set<Int32>) {
         lock.lock()
         frozen = frozen.filter { livePIDs.contains($0.key) }
-        throttled = throttled.filter { livePIDs.contains($0) }
+        throttled = throttled.filter { livePIDs.contains($0.key) }
+        lock.unlock()
+    }
+
+    public func prune(snapshots: [ProcessSnapshot]) {
+        let live = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.pid, $0.generation) })
+        lock.lock()
+        frozen = frozen.filter { pid, item in
+            guard let current = live[pid] else { return false }
+            if !item.generation.isKnown { return true }
+            return item.generation.sameGeneration(current)
+        }
+        throttled = throttled.filter { pid, item in
+            guard let current = live[pid] else { return false }
+            if !item.generation.isKnown { return true }
+            return item.generation.sameGeneration(current)
+        }
         lock.unlock()
     }
 
     public func execute(action: SuggestedAction, snapshots: [ProcessSnapshot], groupBundleID: String?) -> ActionResult {
+        if action == .freeze {
+            return ActionResult(
+                ok: false,
+                message: "已停用冻结，避免卡住屏幕。",
+                action: .freeze,
+                pid: snapshots.first?.pid ?? 0
+            )
+        }
         if action != .none, ProcessFamily.isIndependentCompanionAction(snapshots: snapshots) {
             return ActionResult(
                 ok: false,
                 message: "不会单独处理 Helper / Renderer。它们必须随主应用一起处理，否则开链接等功能会失效。",
                 action: action,
-                pid: snapshots.first?.pid ?? 0
-            )
-        }
-        if action == .freeze, snapshots.contains(where: { isUnsafeToFreeze($0.pid, $0.bundleID) }) {
-            let name = snapshots.first?.processName ?? "应用"
-            return ActionResult(
-                ok: false,
-                message: "\(name) 有窗口，冻结会卡住屏幕，已拒绝。",
-                action: .freeze,
                 pid: snapshots.first?.pid ?? 0
             )
         }
@@ -170,23 +205,46 @@ public final class ActionExecutor: @unchecked Sendable {
     }
 
     public func thaw(pid: Int32) -> ActionResult {
-        let result = sendSignal(pid: pid, signal: SIGCONT)
-        if result.ok {
+        lock.lock()
+        let item = frozen[pid]
+        lock.unlock()
+        if let item, let mismatch = generationMismatch(expected: item.generation, pid: pid) {
             lock.lock()
             frozen.removeValue(forKey: pid)
             lock.unlock()
-            return ActionResult(ok: true, message: "已恢复进程 \(pid)", action: .freeze, pid: pid)
+            return ActionResult(ok: false, message: mismatch, action: .freeze, pid: pid)
+        }
+        let result = sendSignal(pid: pid, signal: SIGCONT)
+        if result.ok || isGone(result.message) {
+            lock.lock()
+            frozen.removeValue(forKey: pid)
+            lock.unlock()
+            if result.ok {
+                return ActionResult(ok: true, message: "已恢复进程 \(pid)", action: .freeze, pid: pid)
+            }
+            return ActionResult(ok: false, message: result.message, action: .freeze, pid: pid)
         }
         return ActionResult(ok: false, message: result.message, action: .freeze, pid: pid)
     }
 
     public func unthrottle(pid: Int32) -> ActionResult {
-        let rc = setpriority(PRIO_PROCESS, UInt32(bitPattern: pid), 0)
-        if rc != 0 {
+        lock.lock()
+        let record = throttled[pid]
+        lock.unlock()
+        guard let record else {
+            return ActionResult(ok: false, message: "该进程不在本工具的降速账本里。", action: .throttle, pid: pid)
+        }
+        if let mismatch = generationMismatch(expected: record.generation, pid: pid) {
+            lock.lock()
+            throttled.removeValue(forKey: pid)
+            lock.unlock()
+            return ActionResult(ok: false, message: mismatch, action: .throttle, pid: pid)
+        }
+        if !setNice(pid: pid, value: record.originalNice) {
             return ActionResult(ok: false, message: "恢复优先级失败：\(posixError())", action: .throttle, pid: pid)
         }
         lock.lock()
-        throttled.remove(pid)
+        throttled.removeValue(forKey: pid)
         lock.unlock()
         return ActionResult(ok: true, message: "已恢复进程 \(pid) 的 CPU 优先级", action: .throttle, pid: pid)
     }
@@ -196,12 +254,12 @@ public final class ActionExecutor: @unchecked Sendable {
         for pid in pids {
             _ = thaw(pid: pid)
         }
-        for pid in throttled {
-            _ = setpriority(PRIO_PROCESS, UInt32(bitPattern: pid), 0)
-        }
         lock.lock()
-        throttled.removeAll()
+        let throttlePIDs = Array(throttled.keys)
         lock.unlock()
+        for pid in throttlePIDs {
+            _ = unthrottle(pid: pid)
+        }
     }
 
     /// Re-adopts previously frozen PIDs after relaunch. Does not resume them.
@@ -220,6 +278,14 @@ public final class ActionExecutor: @unchecked Sendable {
                     processName: item.processName
                 ) {
                 _ = kill(item.pid, SIGCONT)
+                continue
+            }
+            if item.generation.isKnown,
+               let live = currentGeneration(pid: item.pid),
+               !item.generation.sameGeneration(live) {
+                continue
+            }
+            if !item.generation.isKnown {
                 continue
             }
             let status = rs_process_status(item.pid)
@@ -246,12 +312,38 @@ public final class ActionExecutor: @unchecked Sendable {
 
     private func throttle(_ snapshot: ProcessSnapshot) -> ActionResult {
         if let denied = denyIfUnsafe(snapshot) { return denied }
-        let rc = setpriority(PRIO_PROCESS, UInt32(bitPattern: snapshot.pid), 15)
-        if rc != 0 {
+        if let mismatch = generationMismatch(expected: snapshot.generation, pid: snapshot.pid) {
+            return ActionResult(ok: false, message: mismatch, action: .throttle, pid: snapshot.pid)
+        }
+        if isThrottled(pid: snapshot.pid) {
+            return ActionResult(ok: true, message: "\(snapshot.processName) 已降低过 CPU 优先级", action: .throttle, pid: snapshot.pid)
+        }
+        guard let originalNice = currentNice(pid: snapshot.pid) else {
+            return ActionResult(ok: false, message: "读取 \(snapshot.processName) 的优先级失败：\(posixError())", action: .throttle, pid: snapshot.pid)
+        }
+        if originalNice >= 15 {
+            lock.lock()
+            throttled[snapshot.pid] = ThrottleRecord(
+                pid: snapshot.pid,
+                startUnix: recordedStartUnix(snapshot),
+                originalNice: originalNice,
+                bundleID: snapshot.bundleID ?? "",
+                processName: snapshot.processName
+            )
+            lock.unlock()
+            return ActionResult(ok: true, message: "\(snapshot.processName) 已处于较低优先级", action: .throttle, pid: snapshot.pid)
+        }
+        if !setNice(pid: snapshot.pid, value: 15) {
             return ActionResult(ok: false, message: "降低优先级失败：\(posixError())", action: .throttle, pid: snapshot.pid)
         }
         lock.lock()
-        throttled.insert(snapshot.pid)
+        throttled[snapshot.pid] = ThrottleRecord(
+            pid: snapshot.pid,
+            startUnix: recordedStartUnix(snapshot),
+            originalNice: originalNice,
+            bundleID: snapshot.bundleID ?? "",
+            processName: snapshot.processName
+        )
         lock.unlock()
         return ActionResult(ok: true, message: "已降低 \(snapshot.processName) 的 CPU 优先级", action: .throttle, pid: snapshot.pid)
     }
@@ -269,6 +361,9 @@ public final class ActionExecutor: @unchecked Sendable {
             )
         }
         if let denied = denyIfUnsafe(snapshot) { return denied }
+        if let mismatch = generationMismatch(expected: snapshot.generation, pid: snapshot.pid) {
+            return ActionResult(ok: false, message: mismatch, action: .freeze, pid: snapshot.pid)
+        }
         let signal = sendSignal(pid: snapshot.pid, signal: SIGSTOP)
         if !signal.ok {
             return ActionResult(ok: false, message: signal.message, action: .freeze, pid: snapshot.pid)
@@ -288,7 +383,8 @@ public final class ActionExecutor: @unchecked Sendable {
             pid: snapshot.pid,
             bundleID: snapshot.bundleID ?? "",
             processName: snapshot.processName,
-            action: .freeze
+            action: .freeze,
+            startUnix: recordedStartUnix(snapshot)
         )
         lock.unlock()
         return ActionResult(ok: true, message: "已冻结 \(snapshot.processName)。内存通常仍被占用，直到系统稍后自然回收。", action: .freeze, pid: snapshot.pid)
@@ -300,6 +396,10 @@ public final class ActionExecutor: @unchecked Sendable {
 
     private func quitGroup(snapshots: [ProcessSnapshot], bundleID: String?) -> ActionResult {
         if let first = snapshots.first, let denied = denyIfUnsafe(first) { return denied }
+        if let first = snapshots.first,
+           let mismatch = generationMismatch(expected: first.generation, pid: first.pid) {
+            return ActionResult(ok: false, message: mismatch, action: .quit, pid: first.pid)
+        }
         let pid = snapshots.first?.pid ?? 0
         let name = snapshots.first?.processName ?? "应用"
         var ids: [String] = []
@@ -384,6 +484,78 @@ public final class ActionExecutor: @unchecked Sendable {
             return (true, "ok")
         }
         return (false, "向进程 \(pid) 发送信号失败：\(posixError())")
+    }
+
+    private func currentGeneration(pid: Int32) -> ProcessGeneration? {
+        if let lookupGeneration {
+            return lookupGeneration(pid)
+        }
+        return SystemMonitor.processGeneration(pid: pid)
+    }
+
+    private func recordedStartUnix(_ snapshot: ProcessSnapshot) -> TimeInterval {
+        if snapshot.startUnix > 0 { return snapshot.startUnix }
+        return currentGeneration(pid: snapshot.pid)?.startUnix ?? 0
+    }
+
+    private func generationMismatch(expected: ProcessGeneration, pid: Int32) -> String? {
+        guard expected.isKnown else { return nil }
+        guard let live = currentGeneration(pid: pid) else {
+            return "进程 \(pid) 已退出，跳过操作以免误伤复用的 PID。"
+        }
+        if expected.sameGeneration(live) { return nil }
+        return "进程 \(pid) 的启动时间已变，可能是 PID 复用，已拒绝操作。"
+    }
+
+    private func currentNice(pid: Int32) -> Int32? {
+        errno = 0
+        let value = getpriority(PRIO_PROCESS, UInt32(bitPattern: pid))
+        if value == -1, errno != 0 {
+            return nil
+        }
+        return value
+    }
+
+    /// Raising priority (lowering nice) usually needs privileges. Verify the kernel value.
+    private func setNice(pid: Int32, value: Int32) -> Bool {
+        errno = 0
+        if setpriority(PRIO_PROCESS, UInt32(bitPattern: pid), value) == 0,
+           niceMatches(pid: pid, value: value) {
+            return true
+        }
+        if value <= 0, runTaskPolicy("-B", pid: pid), niceMatches(pid: pid, value: value) {
+            return true
+        }
+        if value >= 20, runTaskPolicy("-b", pid: pid), niceMatches(pid: pid, value: value) {
+            return true
+        }
+        return false
+    }
+
+    private func niceMatches(pid: Int32, value: Int32) -> Bool {
+        guard let current = currentNice(pid: pid) else { return false }
+        if value <= 0 { return current <= 0 }
+        if value >= 15 { return current >= 15 }
+        return abs(current - value) <= 1
+    }
+
+    private func runTaskPolicy(_ flag: String, pid: Int32) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/taskpolicy")
+        process.arguments = [flag, "-p", "\(pid)"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func isGone(_ message: String) -> Bool {
+        message.contains("No such process") || message.contains("没有那个进程")
     }
 
     private func posixError() -> String {

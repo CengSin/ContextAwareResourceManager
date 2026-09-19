@@ -159,7 +159,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         authorizationLevel: AuthorizationLevel = .suggestOnly,
         weights: ScoreWeights = .default,
         matchingWindowMinutes: Double = 10,
-        matchingThreshold: Double = WorkspaceMatcher.defaultMinEvidence,
+        matchingThreshold: Double = 0.6,
         sampleIntervalSeconds: Double = 5,
         hasCompletedOnboarding: Bool = false,
         showOnlyActionable: Bool = false,
@@ -216,10 +216,10 @@ public struct AppSettings: Codable, Sendable, Equatable {
             // 0.2 was the Jaccard default; evidence matching uses 0.6 so shared apps
             // like Chrome cannot classify a scene by themselves.
             matchingThreshold = abs(storedThreshold - 0.2) < 0.0001
-                ? WorkspaceMatcher.defaultMinEvidence
+                ? 0.6
                 : storedThreshold
         } else {
-            matchingThreshold = WorkspaceMatcher.defaultMinEvidence
+            matchingThreshold = 0.6
         }
         sampleIntervalSeconds = try container.decodeIfPresent(Double.self, forKey: .sampleIntervalSeconds) ?? 5
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
@@ -264,29 +264,45 @@ public struct AppSettings: Codable, Sendable, Equatable {
 }
 
 public struct FrozenProcess: Sendable, Equatable, Identifiable {
-    public var id: Int32 { pid }
+    public var id: String { generation.key }
     public let pid: Int32
     public let bundleID: String
     public let processName: String
     public let frozenAt: Date
     public let action: SuggestedAction
+    public let startUnix: TimeInterval
+    public let originalNice: Int32?
 
-    public init(pid: Int32, bundleID: String, processName: String, frozenAt: Date = Date(), action: SuggestedAction) {
+    public init(
+        pid: Int32,
+        bundleID: String,
+        processName: String,
+        frozenAt: Date = Date(),
+        action: SuggestedAction,
+        startUnix: TimeInterval = 0,
+        originalNice: Int32? = nil
+    ) {
         self.pid = pid
         self.bundleID = bundleID
         self.processName = processName
         self.frozenAt = frozenAt
         self.action = action
+        self.startUnix = startUnix
+        self.originalNice = originalNice
+    }
+
+    public var generation: ProcessGeneration {
+        ProcessGeneration(pid: pid, startUnix: startUnix)
     }
 }
 
 /// Avoid rewriting SQLite frozen rows when the frozen PID set is unchanged.
 public enum FrozenPersistPolicy: Sendable {
-    public static func signature(_ items: [FrozenProcess]) -> Set<Int32> {
-        Set(items.map(\.pid))
+    public static func signature(_ items: [FrozenProcess]) -> Set<String> {
+        Set(items.map(\.generation.key))
     }
 
-    public static func shouldReplace(previous: Set<Int32>, current: [FrozenProcess]) -> Bool {
+    public static func shouldReplace(previous: Set<String>, current: [FrozenProcess]) -> Bool {
         signature(current) != previous
     }
 }

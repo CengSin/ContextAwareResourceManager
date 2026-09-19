@@ -11,19 +11,15 @@ public final class AppCoordinator: ObservableObject {
     @Published public private(set) var pressure: MemoryPressureLevel = .normal
     @Published public private(set) var processes: [ProcessViewModel] = []
     @Published public private(set) var processGroups: [ProcessGroupViewModel] = []
-    @Published public private(set) var workspaces: [Workspace] = []
     @Published public var settings: AppSettings = .default
-    @Published public private(set) var match: WorkspaceMatch = WorkspaceMatch(workspace: nil, similarity: 0, activeBundleIDs: [])
     @Published public private(set) var frozen: [FrozenProcess] = []
     @Published public private(set) var lastMessage: String?
     @Published public private(set) var lastMessageIsError = false
     @Published public private(set) var runningApps: [RunningAppInfo] = []
     @Published public private(set) var estimatedReleaseMB: Double = 0
     @Published public private(set) var isRunning = false
-    @Published public private(set) var forecasts: [WorkspaceForecast] = []
-    @Published public private(set) var forecastSampleCount: Int = 0
-    @Published public private(set) var forecastScope: MarkovTimeScope = .allDay
     @Published public var pendingAction: PendingAction?
+    @Published public var pendingBatch: PendingDecisionBatch?
     @Published public private(set) var autoStatusText: String = ""
 
     public let store: LocalStore
@@ -34,20 +30,19 @@ public final class AppCoordinator: ObservableObject {
     private let pressureMonitor = MemoryPressureMonitor()
     private var collector: ContextCollector!
     private var timer: Timer?
-    private var previousCPU: [Int32: (timeNs: UInt64, sampledAt: Date)] = [:]
     private var blacklist: Set<String> = []
+    private var refreshInFlight = false
+    private var refreshQueued = false
     private var lastPersistAt = Date.distantPast
     private var lastPruneAt = Date.distantPast
-    private var lastFrequencyUpdate: Date = .distantPast
-    private var sceneState = SceneSwitchState()
-    private var transitionCache: [WorkspaceTransition] = []
     private var lastDwellActionAt: [String: Date] = [:]
-    private var lastPersistedFrozenSignature: Set<Int32> = []
+    private var lastPersistedFrozenSignature: Set<String> = []
+    private var dismissedBatchSignature = ""
+    private var lastAutoAppliedSignature = ""
 
     public init(store: LocalStore) {
         self.store = store
         self.settings = store.loadSettings()
-        self.workspaces = store.loadWorkspaces()
         self.blacklist = store.loadBlacklist()
         self.jevAdvisor.updateEnabled(self.settings.jevReclaimEnabled)
         self.jevAdvisor.updateBaseURL(self.settings.jevBaseURL)
@@ -70,7 +65,6 @@ public final class AppCoordinator: ObservableObject {
         pressureMonitor.start()
         collector.start()
         thawLeftoverFreezes()
-        transitionCache = store.loadWorkspaceTransitions()
         persistSettings()
         refresh()
         let interval = max(2, settings.sampleIntervalSeconds)
@@ -95,156 +89,239 @@ public final class AppCoordinator: ObservableObject {
 
     public func refresh() {
         thawFrontmostIfFrozen()
+        if refreshInFlight {
+            refreshQueued = true
+            return
+        }
+        refreshInFlight = true
+        let hints = RunningAppCatalog.processHints()
+        let listedApps = RunningAppCatalog.collect(currentUID: getuid())
+        let uid = getuid()
+        let favorites = settings.favoriteBundleIDs
+        let blacklist = blacklist
+        let weights = settings.weights
+        let pressureLevel = pressureMonitor.level
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let frontmostPID = frontmost?.processIdentifier
+        let frontmostIsRegular = frontmost?.activationPolicy == .regular
+        let monitor = monitor
+        guard let collector else {
+            refreshInFlight = false
+            return
+        }
+        let executor = executor
 
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let tick = Self.buildTick(
+                monitor: monitor,
+                collector: collector,
+                executor: executor,
+                hints: hints,
+                listedApps: listedApps,
+                uid: uid,
+                favorites: favorites,
+                blacklist: blacklist,
+                weights: weights,
+                pressureLevel: pressureLevel,
+                frontmostPID: frontmostPID,
+                frontmostIsRegular: frontmostIsRegular
+            )
+            await self?.applyTick(tick)
+        }
+    }
+
+    private struct SampledTick: Sendable {
+        var host: HostMemory
+        var cpu: HostCPU
+        var gpu: HostGPU
+        var pressure: MemoryPressureLevel
+        var snapshots: [ProcessSnapshot]
+        var windowOwnerPIDs: Set<Int32>?
+        var groups: [ProcessGroupViewModel]
+        var runningApps: [RunningAppInfo]
+        var now: Date
+    }
+
+    nonisolated private static func buildTick(
+        monitor: SystemMonitor,
+        collector: ContextCollector,
+        executor: ActionExecutor,
+        hints: [AppProcessHint],
+        listedApps: [RunningAppInfo],
+        uid: uid_t,
+        favorites: Set<String>,
+        blacklist: Set<String>,
+        weights: ScoreWeights,
+        pressureLevel: MemoryPressureLevel,
+        frontmostPID: Int32?,
+        frontmostIsRegular: Bool
+    ) -> SampledTick {
         let host = monitor.sampleHost()
         let cpu = monitor.sampleCPU()
         let gpu = monitor.sampleGPU()
         let raw = monitor.sampleProcesses()
         let now = Date()
-        let uid = getuid()
-        // One CGWindowList query per tick; reuse for ownsWindows + freeze safety + thaw.
-        let windowOwnerPIDs = WindowedProcessPolicy.currentOwnerPIDs()
-        executor.windowOwnerPIDs = windowOwnerPIDs
-        executor.reuseWindowOwnerPIDs = true
-        defer {
-            executor.reuseWindowOwnerPIDs = false
-        }
+        let windowOwnerPIDs = WindowedProcessPolicy.currentOwnerPIDs(
+            frontmostPID: frontmostPID,
+            frontmostIsRegular: frontmostIsRegular
+        )
+        let hintByPID = Dictionary(uniqueKeysWithValues: hints.map { ($0.pid, $0) })
 
         var snapshots: [ProcessSnapshot] = []
         snapshots.reserveCapacity(raw.count)
+        var livePIDs = Set<Int32>()
+        livePIDs.reserveCapacity(raw.count)
 
         for sample in raw {
-            let running = NSRunningApplication(processIdentifier: sample.pid)
-            let bundleID = running?.bundleIdentifier ?? BundleIdentity.bundleID(fromPath: sample.path)
-            let name = running?.localizedName ?? sample.name
-            let path = running?.bundleURL?.path ?? BundleIdentity.appPath(fromExecutable: sample.path) ?? sample.path
-            let cpu = cpuPercent(pid: sample.pid, cpuTimeNs: sample.cpuTimeNs, now: now)
-            let isRegularApp = running?.activationPolicy == .regular
-            let snapshot = ProcessSnapshot(
-                timestamp: now,
-                pid: sample.pid,
-                uid: sample.uid,
-                bundleID: bundleID,
-                processName: name,
-                path: path,
-                memoryFootprintMB: sample.memoryFootprintMB,
-                cpuPercent: cpu,
-                isForeground: collector.isForeground(bundleID: bundleID, processName: name),
-                isAccessory: running?.activationPolicy == .accessory,
-                isRegularApp: isRegularApp,
-                ownsWindows: WindowedProcessPolicy.snapshotOwnsWindows(
+            livePIDs.insert(sample.pid)
+            let hint = hintByPID[sample.pid]
+            let bundleID = hint?.bundleID ?? BundleIdentity.bundleID(fromPath: sample.path)
+            let name = (hint?.name.isEmpty == false ? hint?.name : nil) ?? sample.name
+            let path = (hint?.bundlePath.isEmpty == false ? hint?.bundlePath : nil)
+                ?? BundleIdentity.appPath(fromExecutable: sample.path)
+                ?? sample.path
+            let isRegularApp = hint?.isRegularApp ?? path.lowercased().contains(".app")
+            let isAccessory = hint?.isAccessory ?? false
+            snapshots.append(
+                ProcessSnapshot(
+                    timestamp: now,
                     pid: sample.pid,
-                    isRegularApp: isRegularApp,
-                    ownerPIDs: windowOwnerPIDs
-                ),
-                idleSeconds: collector.idleSeconds(
-                    for: bundleID,
+                    uid: sample.uid,
+                    bundleID: bundleID,
                     processName: name,
-                    startUnix: TimeInterval(sample.startUnix),
-                    now: now
-                ),
-                startUnix: TimeInterval(sample.startUnix)
+                    path: path,
+                    memoryFootprintMB: sample.memoryFootprintMB,
+                    cpuPercent: monitor.cpuPercent(pid: sample.pid, cpuTimeNs: sample.cpuTimeNs, now: now),
+                    isForeground: collector.isForeground(bundleID: bundleID, processName: name),
+                    isAccessory: isAccessory,
+                    isRegularApp: isRegularApp,
+                    ownsWindows: WindowedProcessPolicy.snapshotOwnsWindows(
+                        pid: sample.pid,
+                        isRegularApp: isRegularApp,
+                        ownerPIDs: windowOwnerPIDs
+                    ),
+                    idleSeconds: collector.idleSeconds(
+                        for: bundleID,
+                        processName: name,
+                        startUnix: sample.startTimeInterval,
+                        now: now
+                    ),
+                    startUnix: sample.startTimeInterval,
+                    parentPID: sample.parentPID
+                )
             )
-            snapshots.append(snapshot)
-            previousCPU[sample.pid] = (sample.cpuTimeNs, now)
         }
+        monitor.pruneProcessCPU(livePIDs: livePIDs)
 
-        executor.prune(livePIDs: Set(snapshots.map(\.pid)))
-        thawKeepAliveIfFrozen()
-        thawWindowedIfFrozen(ownerPIDs: windowOwnerPIDs)
-
-        let windowStart = now.addingTimeInterval(-settings.matchingWindowMinutes * 60)
-        var activations = store.loadActivations(since: windowStart)
-        if activations.isEmpty, let fg = collector.lastForegroundBundleID {
-            activations = [AppActivation(bundleID: fg, processName: collector.lastForegroundName ?? fg)]
-        }
-        let match = WorkspaceMatcher.match(
-            workspaces: workspaces,
-            activations: activations,
-            now: now,
-            windowMinutes: settings.matchingWindowMinutes,
-            threshold: settings.matchingThreshold,
-            stickyWorkspaceID: sceneState.committedWorkspaceID
-        )
-
-        if let current = match.workspace, now.timeIntervalSince(lastFrequencyUpdate) > 30 {
-            updateObservedFrequency(workspace: current, active: match.activeBundleIDs)
-            lastFrequencyUpdate = now
-        }
-
-        executor.extraKeepAliveBundleIDs = settings.favoriteBundleIDs
         let records = ReclaimScorer.scoreAll(
             snapshots: snapshots,
-            workspace: match.workspace,
-            weights: settings.weights,
+            workspace: nil,
+            weights: weights,
             blacklist: blacklist,
-            favorites: settings.favoriteBundleIDs
+            favorites: favorites
         )
         let recordByPid = Dictionary(uniqueKeysWithValues: records.map { ($0.pid, $0) })
-
-        var models: [ProcessViewModel] = snapshots.compactMap { snapshot in
+        let models: [ProcessViewModel] = snapshots.compactMap { snapshot in
             guard let record = recordByPid[snapshot.pid] else { return nil }
             return ProcessViewModel(
                 snapshot: snapshot,
-                score: record,
+                score: record.with(suggestedAction: .none),
                 appPath: snapshot.path,
                 appliedAction: executor.appliedAction(pid: snapshot.pid)
             )
         }
-        models = applyJevOverrides(
-            models: models,
-            pressure: host.inferredPressure(sourceLevel: pressureMonitor.level),
-            windowOwnerPIDs: windowOwnerPIDs
-        )
-
-        hostMemory = host
-        hostCPU = cpu
-        hostGPU = gpu
-        pressure = host.inferredPressure(sourceLevel: pressureMonitor.level)
-        let grouped = Self.listed(
-            Self.grouped(models).filter { group in
+        let grouped = listed(
+            grouped(models, hints: hints).filter { group in
                 if group.isForeground { return true }
                 return group.members.contains {
                     $0.snapshot.memoryFootprintMB >= 8 || $0.score.score >= 20 || $0.snapshot.isForeground
                 }
             }
         )
-        processes = grouped.flatMap(\.members)
-        processGroups = grouped
-        self.match = match
-        runningApps = RunningAppCatalog.mergingProcessSnapshots(
-            existing: RunningAppCatalog.collect(currentUID: uid),
+        return SampledTick(
+            host: host,
+            cpu: cpu,
+            gpu: gpu,
+            pressure: host.inferredPressure(sourceLevel: pressureLevel),
             snapshots: snapshots,
-            currentUID: uid
+            windowOwnerPIDs: windowOwnerPIDs,
+            groups: grouped,
+            runningApps: RunningAppCatalog.mergingProcessSnapshots(
+                existing: listedApps,
+                snapshots: snapshots,
+                currentUID: uid
+            ),
+            now: now
         )
-        handleSceneSwitch(match: match, groups: processGroups, now: now)
-        processes = processes.map { model in
-            ProcessViewModel(
-                snapshot: model.snapshot,
-                score: model.score,
-                appPath: model.appPath,
-                appliedAction: executor.appliedAction(pid: model.snapshot.pid)
+    }
+
+    private func applyTick(_ tick: SampledTick) {
+        executor.windowOwnerPIDs = tick.windowOwnerPIDs
+        executor.reuseWindowOwnerPIDs = true
+        defer { executor.reuseWindowOwnerPIDs = false }
+        executor.extraKeepAliveBundleIDs = settings.favoriteBundleIDs
+        executor.prune(snapshots: tick.snapshots)
+        thawKeepAliveIfFrozen()
+        thawWindowedIfFrozen(ownerPIDs: tick.windowOwnerPIDs)
+
+        let load = JevLoadState(
+            memory_pressure: tick.pressure.rawValue,
+            cpu_percent: tick.cpu.usagePercent,
+            memory_used_ratio: tick.host.physicalBytes == 0
+                ? 0
+                : Double(tick.host.usedBytes) / Double(tick.host.physicalBytes),
+            swap_used_mb: Double(tick.host.swapUsedBytes) / 1_048_576,
+            foreground_bundle_id: collector.lastForegroundBundleID ?? "",
+            foreground_name: collector.lastForegroundName ?? ""
+        )
+        let grayApps = JevGrayZone.apps(
+            groups: tick.groups,
+            favorites: settings.favoriteBundleIDs,
+            windowOwnerPIDs: tick.windowOwnerPIDs
+        )
+        let batch = jevAdvisor.syncBatch(load: load, apps: grayApps)
+        var grouped = overlayBatchActions(groups: tick.groups, actions: batch.actions)
+
+        hostMemory = tick.host
+        hostCPU = tick.cpu
+        hostGPU = tick.gpu
+        pressure = tick.pressure
+        runningApps = tick.runningApps
+        applyBatchDecisions(groups: grouped, batch: batch, now: tick.now)
+        grouped = grouped.map { group in
+            ProcessGroupViewModel(
+                key: group.key,
+                members: group.members.map { model in
+                    ProcessViewModel(
+                        snapshot: model.snapshot,
+                        score: model.score,
+                        appPath: model.appPath,
+                        appliedAction: executor.appliedAction(pid: model.snapshot.pid)
+                    )
+                }
             )
         }
-        processGroups = Self.listed(Self.grouped(processes))
+        grouped = Self.listed(grouped)
+        if processGroups != grouped {
+            processGroups = grouped
+            processes = grouped.flatMap(\.members)
+        }
         frozen = executor.frozenProcesses
         persistFrozen()
-        updateForecasts(from: match, now: now)
-        estimatedReleaseMB = processGroups
-            .filter { $0.effectiveSuggestion != .none }
+        let release = grouped
+            .filter { $0.effectiveSuggestion == .quit }
             .reduce(0) { $0 + $1.totalMemoryMB }
-        let pendingFreeze = processGroups.filter {
-            SceneSwitchPolicy.isAutoCandidate(SceneSwitchTarget(group: $0))
-        }.count
-        autoStatusText = SceneSwitchPolicy.statusText(
-            authorization: settings.authorizationLevel,
-            match: match,
-            isDebouncing: sceneState.isDebouncing,
-            frozenCount: executor.frozenProcesses.count,
-            pendingFreezeCount: pendingFreeze
-        )
+        if abs(estimatedReleaseMB - release) > 0.5 {
+            estimatedReleaseMB = release
+        }
+        autoStatusText = batchStatusText(batch: batch)
+        persistIfNeeded(snapshots: tick.snapshots, now: tick.now)
 
-        persistIfNeeded(snapshots: snapshots, now: now)
+        refreshInFlight = false
+        if refreshQueued {
+            refreshQueued = false
+            refresh()
+        }
     }
 
     public var visibleGroups: [ProcessGroupViewModel] {
@@ -276,18 +353,6 @@ public final class AppCoordinator: ObservableObject {
                 }
             }
         }
-    }
-
-    public func saveWorkspace(_ workspace: Workspace) {
-        try? store.saveWorkspace(workspace)
-        workspaces = store.loadWorkspaces()
-        refresh()
-    }
-
-    public func deleteWorkspace(_ workspace: Workspace) {
-        try? store.deleteWorkspace(id: workspace.id)
-        workspaces = store.loadWorkspaces()
-        refresh()
     }
 
     public func request(_ action: SuggestedAction, for group: ProcessGroupViewModel) {
@@ -327,6 +392,43 @@ public final class AppCoordinator: ObservableObject {
             )
         }
         pendingAction = nil
+    }
+
+    public func confirmPendingBatch() {
+        guard let batch = pendingBatch else { return }
+        pendingBatch = nil
+        lastAutoAppliedSignature = batch.id
+        var okCount = 0
+        for item in batch.items {
+            let result = executor.execute(
+                action: item.action,
+                snapshots: item.group.members.map(\.snapshot),
+                groupBundleID: item.group.key.hasPrefix("pid:") ? item.group.primary.snapshot.bundleID : item.group.key
+            )
+            lastDwellActionAt[item.group.key] = Date()
+            if result.ok {
+                okCount += 1
+                try? store.insertFeedback(
+                    UserFeedback(
+                        bundleID: item.group.score.bundleID,
+                        scoreAtDecisionTime: item.group.score.score,
+                        userAction: UserFeedbackAction.accepted.rawValue
+                    )
+                )
+            }
+        }
+        lastMessage = okCount > 0 ? "已按建议处理 \(okCount) 个应用。" : "没有成功执行的建议。"
+        lastMessageIsError = okCount == 0
+        frozen = executor.frozenProcesses
+        persistFrozen()
+        refresh()
+    }
+
+    public func cancelPendingBatch() {
+        if let batch = pendingBatch {
+            dismissedBatchSignature = batch.id
+        }
+        pendingBatch = nil
     }
 
     public func thaw(pid: Int32) {
@@ -413,10 +515,15 @@ public final class AppCoordinator: ObservableObject {
         refresh()
     }
 
-    public static func grouped(_ models: [ProcessViewModel]) -> [ProcessGroupViewModel] {
+    nonisolated public static func grouped(
+        _ models: [ProcessViewModel],
+        hints: [AppProcessHint] = []
+    ) -> [ProcessGroupViewModel] {
+        let keys = ProcessGrouper.keys(snapshots: models.map(\.snapshot), hints: hints)
         var buckets: [String: [ProcessViewModel]] = [:]
         for model in models {
-            let key = ProcessFamily.familyKey(bundleID: model.snapshot.bundleID, pid: model.snapshot.pid)
+            let key = keys[model.snapshot.pid]
+                ?? ProcessFamily.familyKey(bundleID: model.snapshot.bundleID, pid: model.snapshot.pid)
             buckets[key, default: []].append(model)
         }
         return buckets
@@ -426,7 +533,7 @@ public final class AppCoordinator: ObservableObject {
 
     /// Score-sorted, but large / foreground / already-handled apps are never dropped.
     /// Otherwise a busy Chrome family (score 0 while in use) falls out of the top 80.
-    public static func listed(_ groups: [ProcessGroupViewModel], limit: Int = 80) -> [ProcessGroupViewModel] {
+    nonisolated public static func listed(_ groups: [ProcessGroupViewModel], limit: Int = 80) -> [ProcessGroupViewModel] {
         if groups.count <= limit { return groups }
         var keys = Set<String>()
         var picked: [ProcessGroupViewModel] = []
@@ -442,7 +549,7 @@ public final class AppCoordinator: ObservableObject {
         return picked.sorted(by: Self.displayOrder)
     }
 
-    public static func displayOrder(_ lhs: ProcessGroupViewModel, _ rhs: ProcessGroupViewModel) -> Bool {
+    nonisolated public static func displayOrder(_ lhs: ProcessGroupViewModel, _ rhs: ProcessGroupViewModel) -> Bool {
         if lhs.score.score != rhs.score.score {
             return lhs.score.score > rhs.score.score
         }
@@ -533,10 +640,6 @@ public final class AppCoordinator: ObservableObject {
 
     private func handleActivation(_ activation: AppActivation) {
         try? store.insertActivation(activation)
-        if let index = workspaces.firstIndex(where: { $0.coreAppBundleIDs.contains(activation.bundleID) }) {
-            workspaces[index].lastActiveAt = activation.timestamp
-            try? store.saveWorkspace(workspaces[index])
-        }
         if thawOnUserOpen(bundleID: activation.bundleID, processName: activation.processName) > 0 {
             refresh()
         }
@@ -564,14 +667,6 @@ public final class AppCoordinator: ObservableObject {
         _ = thawOnUserOpen(bundleID: bundleID, processName: name)
     }
 
-    private func cpuPercent(pid: Int32, cpuTimeNs: UInt64, now: Date) -> Double {
-        guard let previous = previousCPU[pid] else { return 0 }
-        let dt = now.timeIntervalSince(previous.sampledAt)
-        guard dt > 0.2, cpuTimeNs >= previous.timeNs else { return 0 }
-        let dCPU = Double(cpuTimeNs - previous.timeNs) / 1_000_000_000.0
-        return max(0, (dCPU / dt) * 100)
-    }
-
     private func persistIfNeeded(snapshots: [ProcessSnapshot], now: Date) {
         if now.timeIntervalSince(lastPersistAt) >= 15 {
             let notable = snapshots.filter { $0.memoryFootprintMB >= 20 || $0.isForeground || $0.cpuPercent >= 15 }
@@ -584,183 +679,28 @@ public final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func updateObservedFrequency(workspace: Workspace, active: Set<String>) {
-        guard let index = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
-        var freq = workspaces[index].observedAppFrequency
-        for bundleID in active {
-            freq[bundleID, default: 0] += 1
-        }
-        workspaces[index].observedAppFrequency = freq
-        workspaces[index].lastActiveAt = Date()
-        try? store.saveWorkspace(workspaces[index])
-    }
-
-    private func handleSceneSwitch(match: WorkspaceMatch, groups: [ProcessGroupViewModel], now: Date) {
-        let targets = groups.map(SceneSwitchTarget.init(group:))
-        let (newState, plan) = SceneSwitchPolicy.evaluate(
-            state: sceneState,
-            authorization: settings.authorizationLevel,
-            current: match,
-            targets: targets,
-            frozen: executor.frozenProcesses,
-            now: now
-        )
-        sceneState = newState
-
-        if plan.shouldRecordTransition {
-            try? store.insertWorkspaceTransition(
-                from: plan.fromWorkspaceID,
-                to: plan.toWorkspaceID,
-                at: now
-            )
-            transitionCache = store.loadWorkspaceTransitions()
-        }
-
-        var actions = plan.actions
-        if plan.outcome == .unchanged {
-            let dwell = SceneSwitchPolicy.dwellActions(
-                state: sceneState,
-                authorization: settings.authorizationLevel,
-                current: match,
-                targets: targets,
-                lastActionAt: lastDwellActionAt,
-                now: now
-            )
-            let existing = Set(actions.map(\.groupKey))
-            actions.append(contentsOf: dwell.filter { !existing.contains($0.groupKey) })
-        }
-
-        guard !plan.thaw.isEmpty || !actions.isEmpty else { return }
-
-        var freezeCount = 0
-        var throttleCount = 0
-        var thawCount = 0
-        for item in plan.thaw {
-            if executor.thaw(pid: item.pid).ok {
-                thawCount += 1
-            }
-        }
-        let groupByKey = Dictionary(uniqueKeysWithValues: groups.map { ($0.key, $0) })
-        for planned in actions {
-            guard let group = groupByKey[planned.groupKey] else { continue }
-            let candidate = JevHardGate.Candidate(
-                group: group,
-                favorites: settings.favoriteBundleIDs,
-                windowOwnerPIDs: executor.windowOwnerPIDs
-            )
-            let jevGated = jevAdvisor.decisionForAuto(
-                candidate: candidate,
-                pressure: pressure,
-                idleSeconds: group.idleSeconds,
-                memoryMB: group.totalMemoryMB,
-                cpuPercent: group.cpuPercent,
-                authorization: settings.authorizationLevel,
-                alreadyFrozen: group.appliedAction == .freeze,
-                scorerAction: planned.originalSuggestion
-            )
-            guard let action = SceneSwitchPolicy.autoAction(for: jevGated) else { continue }
-            let result = executor.execute(
-                action: action,
-                snapshots: group.members.map(\.snapshot),
-                groupBundleID: group.key.hasPrefix("pid:") ? group.primary.snapshot.bundleID : group.key
-            )
-            lastDwellActionAt[planned.groupKey] = now
-            if result.ok {
-                switch action {
-                case .freeze: freezeCount += 1
-                case .throttle: throttleCount += 1
-                default: break
-                }
-                try? store.insertFeedback(
-                    UserFeedback(
-                        bundleID: planned.bundleID,
-                        scoreAtDecisionTime: group.score.score,
-                        userAction: UserFeedbackAction.autoSceneSwitch.rawValue
-                    )
-                )
-            }
-        }
-        let text = SceneSwitchPolicy.summary(
-            workspaceName: match.displayName,
-            freezeCount: freezeCount,
-            throttleCount: throttleCount,
-            thawCount: thawCount
-        )
-        if !text.isEmpty {
-            lastMessage = text
-            lastMessageIsError = false
-        }
-    }
-
-    private func updateForecasts(from match: WorkspaceMatch, now: Date) {
-        let forecast = WorkspaceMarkov.forecast(
-            from: match.workspaceID,
-            at: now,
-            transitions: transitionCache,
-            workspaceIDs: workspaces.map(\.id)
-        )
-        forecastSampleCount = forecast.sampleCount
-        forecastScope = forecast.scope
-        forecasts = forecast.predictions.map { prediction in
-            WorkspaceForecast(
-                workspaceID: prediction.workspaceID,
-                name: prediction.workspaceID.flatMap { id in
-                    workspaces.first(where: { $0.id == id })?.name
-                } ?? "未分类",
-                probability: prediction.probability,
-                sampleCount: prediction.count,
-                scope: forecast.scope
+    private func overlayBatchActions(
+        groups: [ProcessGroupViewModel],
+        actions: [String: SuggestedAction]
+    ) -> [ProcessGroupViewModel] {
+        guard !actions.isEmpty else { return groups }
+        return groups.map { group in
+            ProcessGroupViewModel(
+                key: group.key,
+                members: overlayBatchActions(models: group.members, actions: actions)
             )
         }
     }
 
-    /// Consult Jev for gray-zone candidates and rewrite suggested actions. Async results apply on later ticks.
-    private func applyJevOverrides(
+    private func overlayBatchActions(
         models: [ProcessViewModel],
-        pressure: MemoryPressureLevel,
-        windowOwnerPIDs: Set<Int32>?
+        actions: [String: SuggestedAction]
     ) -> [ProcessViewModel] {
-        guard settings.jevReclaimEnabled, JevAPIKey.hasAPIKey else { return models }
-        let groups = Self.grouped(models)
-        var actionByBundle: [String: SuggestedAction] = [:]
-        for group in groups {
-            let bundleID = group.primary.snapshot.bundleID ?? group.score.bundleID
-            guard !bundleID.isEmpty else { continue }
-            let candidate = JevHardGate.Candidate(
-                group: group,
-                favorites: settings.favoriteBundleIDs,
-                windowOwnerPIDs: windowOwnerPIDs
-            )
-            let adjusted = jevAdvisor.adjustSuggestion(
-                scorerAction: group.score.suggestedAction,
-                candidate: candidate,
-                pressure: pressure,
-                idleSeconds: group.idleSeconds,
-                memoryMB: group.totalMemoryMB,
-                cpuPercent: group.cpuPercent,
-                authorization: settings.authorizationLevel,
-                alreadyFrozen: group.appliedAction == .freeze,
-                scheduleIfNeeded: group.score.suggestedAction != .none
-                    || SceneSwitchPolicy.isAutoCandidate(SceneSwitchTarget(group: group))
-            )
-            let safe = CategoryBanPolicy.adjustedAction(
-                adjusted,
-                bundleID: bundleID,
-                processName: group.displayName,
-                path: group.appPath ?? ""
-            )
-            if safe != group.score.suggestedAction {
-                actionByBundle[bundleID] = safe
-                if let root = ProcessFamily.rootBundleID(from: bundleID) {
-                    actionByBundle[root] = safe
-                }
-            }
-        }
-        guard !actionByBundle.isEmpty else { return models }
+        guard !actions.isEmpty else { return models }
         return models.map { model in
             let bundle = model.snapshot.bundleID ?? model.score.bundleID
             let root = ProcessFamily.rootBundleID(from: bundle) ?? bundle
-            guard let action = actionByBundle[bundle] ?? actionByBundle[root] else { return model }
+            guard let action = (actions[bundle] ?? actions[root])?.withoutFreeze() else { return model }
             return ProcessViewModel(
                 snapshot: model.snapshot,
                 score: model.score.with(suggestedAction: action),
@@ -770,12 +710,113 @@ public final class AppCoordinator: ObservableObject {
         }
     }
 
+    private func applyBatchDecisions(
+        groups: [ProcessGroupViewModel],
+        batch: JevBatchSnapshot,
+        now: Date
+    ) {
+        guard jevAdvisor.isActive else { return }
+        guard !batch.pending else { return }
+        let items = actionableItems(from: groups, actions: batch.actions)
+        guard !items.isEmpty else { return }
+        let signature = items.map { "\($0.group.key):\($0.action.rawValue)" }.sorted().joined(separator: "|")
+        if settings.authorizationLevel == .sceneSwitch {
+            executeAutoItems(items, signature: signature, now: now)
+        } else if pendingBatch == nil, pendingAction == nil, signature != dismissedBatchSignature {
+            pendingBatch = PendingDecisionBatch(id: signature, items: items)
+        }
+    }
+
+    private func actionableItems(
+        from groups: [ProcessGroupViewModel],
+        actions: [String: SuggestedAction]
+    ) -> [PendingDecisionItem] {
+        var items: [PendingDecisionItem] = []
+        for group in groups {
+            let bundle = group.primary.snapshot.bundleID ?? group.score.bundleID
+            let root = ProcessFamily.rootBundleID(from: bundle) ?? bundle
+            let action = (actions[bundle] ?? actions[root] ?? .none).withoutFreeze()
+            guard action.isActable else { continue }
+            if action == .throttle, group.appliedAction == .throttle { continue }
+            if settings.authorizationLevel == .sceneSwitch, action == .quit, group.idleSeconds < 30 {
+                continue
+            }
+            if let last = lastDwellActionAt[group.key], Date().timeIntervalSince(last) < 90 {
+                continue
+            }
+            items.append(PendingDecisionItem(group: group, action: action))
+            if items.count >= 6 { break }
+        }
+        return items
+    }
+
+    private func executeAutoItems(
+        _ items: [PendingDecisionItem],
+        signature: String,
+        now: Date
+    ) {
+        if signature == lastAutoAppliedSignature { return }
+        var throttleCount = 0
+        var quitCount = 0
+        for item in items {
+            let result = executor.execute(
+                action: item.action,
+                snapshots: item.group.members.map(\.snapshot),
+                groupBundleID: item.group.key.hasPrefix("pid:") ? item.group.primary.snapshot.bundleID : item.group.key
+            )
+            lastDwellActionAt[item.group.key] = now
+            if result.ok {
+                switch item.action {
+                case .throttle: throttleCount += 1
+                case .quit: quitCount += 1
+                default: break
+                }
+                try? store.insertFeedback(
+                    UserFeedback(
+                        bundleID: item.group.score.bundleID,
+                        scoreAtDecisionTime: item.group.score.score,
+                        userAction: UserFeedbackAction.autoIdleReclaim.rawValue
+                    )
+                )
+            }
+        }
+        lastAutoAppliedSignature = signature
+        var parts: [String] = []
+        if throttleCount > 0 { parts.append("降低 \(throttleCount) 个优先级") }
+        if quitCount > 0 { parts.append("请求退出 \(quitCount) 个应用") }
+        if !parts.isEmpty {
+            lastMessage = "已按当前负载自动" + parts.joined(separator: "，") + "。"
+            lastMessageIsError = false
+        }
+    }
+
+    private func batchStatusText(batch: JevBatchSnapshot) -> String {
+        if !jevAdvisor.isActive {
+            return "配置 Jev API Key 并启用后，才会按负载给出建议"
+        }
+        if batch.pending {
+            return "正在根据当前负载询问 Jev…"
+        }
+        let actable = processGroups.filter { $0.effectiveSuggestion.isActable }.count
+        if settings.authorizationLevel == .sceneSwitch {
+            if actable > 0 {
+                return "半自动 · \(actable) 个灰区应用待处理"
+            }
+            return "半自动 · 按负载保留当前灰区应用"
+        }
+        if pendingBatch != nil {
+            return "仅建议 · 请确认是否应用 Jev 的处理"
+        }
+        if actable > 0 {
+            return "仅建议 · \(actable) 个灰区应用可处理"
+        }
+        return "仅建议 · 暂无需要处理的灰区应用"
+    }
 
 }
 
 public enum PanelTab: String, CaseIterable, Identifiable, Sendable {
     case processes
-    case workspaces
     case favorites
     case settings
 
@@ -784,7 +825,6 @@ public enum PanelTab: String, CaseIterable, Identifiable, Sendable {
     public var title: String {
         switch self {
         case .processes: return "进程"
-        case .workspaces: return "场景"
         case .favorites: return "常用"
         case .settings: return "设置"
         }
@@ -795,4 +835,15 @@ public struct PendingAction: Identifiable, Equatable {
     public var id: String { group.id + "-" + action.rawValue }
     public let group: ProcessGroupViewModel
     public let action: SuggestedAction
+}
+
+public struct PendingDecisionItem: Identifiable, Equatable {
+    public var id: String { group.id + "-" + action.rawValue }
+    public let group: ProcessGroupViewModel
+    public let action: SuggestedAction
+}
+
+public struct PendingDecisionBatch: Identifiable, Equatable {
+    public let id: String
+    public let items: [PendingDecisionItem]
 }

@@ -8,8 +8,7 @@ public enum ReclaimScorer: Sendable {
 
     public static func suggestedAction(for score: Double, weights: ScoreWeights = .default) -> SuggestedAction {
         if score < weights.noneBelow { return .none }
-        if score < weights.throttleBelow { return .throttle }
-        if score < weights.freezeBelow { return .freeze }
+        if score < weights.freezeBelow { return .throttle }
         return .quit
     }
 
@@ -93,6 +92,8 @@ public enum ReclaimScorer: Sendable {
             processName: snapshot.processName,
             path: snapshot.path
         )
+
+        action = action.withoutFreeze()
 
         return ReclaimScoreRecord(
             pid: snapshot.pid,

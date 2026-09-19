@@ -57,18 +57,25 @@ public enum WindowedProcessPolicy: Sendable {
     }
 
     /// `nil` means the list is missing or incomplete — callers must fail closed.
-    public static func currentOwnerPIDs() -> Set<Int32>? {
+    public static func currentOwnerPIDs(
+        frontmostPID: Int32? = nil,
+        frontmostIsRegular: Bool = true
+    ) -> Set<Int32>? {
         let options = CGWindowListOption(arrayLiteral: .optionAll, .excludeDesktopElements)
         guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]],
               !raw.isEmpty
         else { return nil }
 
         let pids = ownerPIDs(from: raw.compactMap(parse))
-        if let front = NSWorkspace.shared.frontmostApplication,
-           front.activationPolicy == .regular,
-           front.processIdentifier > 0,
-           !pids.contains(front.processIdentifier)
-        {
+        if frontmostPID == nil, frontmostIsRegular {
+            if let front = NSWorkspace.shared.frontmostApplication,
+               front.activationPolicy == .regular,
+               front.processIdentifier > 0,
+               !pids.contains(front.processIdentifier)
+            {
+                return nil
+            }
+        } else if frontmostIsRegular, let frontmostPID, frontmostPID > 0, !pids.contains(frontmostPID) {
             return nil
         }
         return pids

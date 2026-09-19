@@ -74,6 +74,18 @@ public struct ReclaimScoreRecord: Codable, Sendable, Equatable, Identifiable {
         self.isInCurrentWorkspace = isInCurrentWorkspace
     }
 
+    public static func == (lhs: ReclaimScoreRecord, rhs: ReclaimScoreRecord) -> Bool {
+        lhs.pid == rhs.pid
+            && lhs.bundleID == rhs.bundleID
+            && lhs.processName == rhs.processName
+            && abs(lhs.score - rhs.score) < 0.5
+            && lhs.components == rhs.components
+            && lhs.suggestedAction == rhs.suggestedAction
+            && abs(lhs.estimatedReleaseMB - rhs.estimatedReleaseMB) < 0.5
+            && lhs.isProtected == rhs.isProtected
+            && lhs.isInCurrentWorkspace == rhs.isInCurrentWorkspace
+    }
+
     public func with(suggestedAction action: SuggestedAction) -> ReclaimScoreRecord {
         ReclaimScoreRecord(
             pid: pid,

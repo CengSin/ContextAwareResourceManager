@@ -16,152 +16,23 @@ enum StewardChecks {
             }
         }
 
-        check("recency now is one", abs(WorkspaceMatcher.recency(minutesAgo: 0) - 1) < 0.0001)
-        check("recency half life is half", abs(WorkspaceMatcher.recency(minutesAgo: 8) - 0.5) < 0.0001)
-
-        let now = Date()
-        let office = Workspace(
-            name: "办公",
-            coreAppBundleIDs: [
-                "com.jetbrains.WebStorm",
-                "com.jetbrains.intellij",
-                "com.jetbrains.pycharm",
-                "com.jetbrains.goland",
-                "com.google.Chrome",
-                "com.tinyspeck.slackmacgap",
-                "com.googlecode.iterm2",
-                "com.figma.Desktop",
-                "com.docker.docker",
-                "md.obsidian"
-            ]
+        let snapA = ProcessSnapshot(
+            timestamp: Date(timeIntervalSince1970: 1),
+            pid: 9, uid: 501, bundleID: "com.example.app", processName: "Example",
+            memoryFootprintMB: 100, cpuPercent: 1, isForeground: false, idleSeconds: 30
         )
-        let fun = Workspace(
-            name: "娱乐",
-            coreAppBundleIDs: ["com.tencent.xinWeChat", "com.google.Chrome"]
+        let snapB = ProcessSnapshot(
+            timestamp: Date(timeIntervalSince1970: 99),
+            pid: 9, uid: 501, bundleID: "com.example.app", processName: "Example",
+            memoryFootprintMB: 100.2, cpuPercent: 1.2, isForeground: false, idleSeconds: 40
         )
-        func activation(_ bundle: String, name: String, minutesAgo: Double = 0) -> AppActivation {
-            AppActivation(
-                timestamp: now.addingTimeInterval(-minutesAgo * 60),
-                bundleID: bundle,
-                processName: name
-            )
-        }
-
-        let low = WorkspaceMatcher.match(
-            workspaces: [office],
-            activations: [
-                activation("com.apple.Music", name: "Music"),
-                activation("com.apple.Maps", name: "Maps")
-            ],
-            now: now
+        check("snapshot equality ignores timestamp and small idle drift", snapA == snapB)
+        let snapC = ProcessSnapshot(
+            timestamp: snapA.timestamp,
+            pid: 9, uid: 501, bundleID: "com.example.app", processName: "Example",
+            memoryFootprintMB: 100, cpuPercent: 1, isForeground: true, idleSeconds: 30
         )
-        check("unclassified when nothing matches", low.isUnclassified && low.displayName == "未分类")
-
-        let high = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [
-                activation("com.jetbrains.WebStorm", name: "WebStorm"),
-                activation("com.googlecode.iterm2", name: "iTerm")
-            ],
-            now: now
-        )
-        check("picks office from jetbrains ide", high.workspace?.name == "办公" && high.similarity >= 1)
-
-        check("empty workspaces unclassified", WorkspaceMatcher.match(
-            workspaces: [],
-            activations: [activation("com.apple.Safari", name: "Safari")],
-            now: now
-        ).isUnclassified)
-
-        let stale = WorkspaceMatcher.match(
-            workspaces: [office],
-            activations: [activation("com.jetbrains.WebStorm", name: "WebStorm", minutesAgo: 60)],
-            now: now,
-            windowMinutes: 10
-        )
-        check("stale activations ignored", stale.isUnclassified && stale.activeBundleIDs.isEmpty)
-
-        let codingSubset = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [
-                activation("com.jetbrains.WebStorm", name: "WebStorm"),
-                activation("com.google.Chrome", name: "Google Chrome")
-            ],
-            now: now
-        )
-        check(
-            "few office apps still beat entertainment",
-            codingSubset.workspace?.name == "办公" && (codingSubset.scoresByWorkspaceID[office.id] ?? 0) > (codingSubset.scoresByWorkspaceID[fun.id] ?? 0)
-        )
-
-        let chromeOnly = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [activation("com.google.Chrome", name: "Google Chrome")],
-            now: now
-        )
-        check("chrome alone does not become entertainment", chromeOnly.isUnclassified)
-
-        let wechatOnly = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [activation("com.tencent.xinWeChat", name: "WeChat")],
-            now: now
-        )
-        check("wechat exclusive picks entertainment", wechatOnly.workspace?.name == "娱乐")
-
-        let wechatChrome = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [
-                activation("com.tencent.xinWeChat", name: "WeChat"),
-                activation("com.google.Chrome", name: "Google Chrome")
-            ],
-            now: now
-        )
-        check("wechat plus chrome picks entertainment", wechatChrome.workspace?.name == "娱乐")
-
-        let ideOnly = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [activation("com.jetbrains.intellij", name: "IntelliJ IDEA")],
-            now: now
-        )
-        check("intellij alone still office despite large core list", ideOnly.workspace?.name == "办公")
-
-        let webstormHelper = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [activation("com.jetbrains.WebStorm.helper.renderer", name: "WebStorm Helper")],
-            now: now
-        )
-        check("jetbrains helper roots to ide", webstormHelper.workspace?.name == "办公")
-
-        let stickyChrome = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [activation("com.google.Chrome", name: "Google Chrome")],
-            now: now,
-            stickyWorkspaceID: office.id
-        )
-        check("sticky office keeps chrome-only as office", stickyChrome.workspace?.name == "办公")
-
-        let switchToFun = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [
-                activation("com.jetbrains.WebStorm", name: "WebStorm", minutesAgo: 8),
-                activation("com.tencent.xinWeChat", name: "WeChat"),
-                activation("com.google.Chrome", name: "Google Chrome")
-            ],
-            now: now,
-            stickyWorkspaceID: office.id
-        )
-        check("strong entertainment evidence leaves office", switchToFun.workspace?.name == "娱乐")
-
-        let briefWechat = WorkspaceMatcher.match(
-            workspaces: [office, fun],
-            activations: [
-                activation("com.jetbrains.WebStorm", name: "WebStorm"),
-                activation("com.tencent.xinWeChat", name: "WeChat")
-            ],
-            now: now,
-            stickyWorkspaceID: office.id
-        )
-        check("brief wechat does not leave office", briefWechat.workspace?.name == "办公")
+        check("snapshot equality sees foreground change", snapA != snapC)
 
         check("normalize mid", abs(ReclaimScorer.normalize(60, cap: 120) - 0.5) < 0.0001)
         check("normalize cap", ReclaimScorer.normalize(240, cap: 120) == 1)
@@ -203,8 +74,9 @@ enum StewardChecks {
             workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
         )
         check(
-            "off-scene chrome freezes after a few idle minutes",
-            offSceneChrome.suggestedAction == .freeze || offSceneChrome.suggestedAction == .quit
+            "off-scene chrome is throttle or quit, never freeze",
+            (offSceneChrome.suggestedAction == .throttle || offSceneChrome.suggestedAction == .quit)
+                && offSceneChrome.suggestedAction != .freeze
         )
         check("off-scene bonus applied", offSceneChrome.components.offWorkspaceContribution >= 20)
 
@@ -215,7 +87,16 @@ enum StewardChecks {
             ),
             workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
         )
-        check("long-idle off-scene app reaches freeze", idleCodex.suggestedAction == .freeze || idleCodex.suggestedAction == .quit)
+        check("long-idle off-scene app never freeze", idleCodex.suggestedAction != .freeze)
+
+        let windowedIdle = ReclaimScorer.score(
+            snapshot: ProcessSnapshot(
+                pid: 80, uid: 501, bundleID: "com.sublimetext.4", processName: "Sublime Text",
+                memoryFootprintMB: 400, cpuPercent: 0, isForeground: false, ownsWindows: true, idleSeconds: 53 * 60
+            ),
+            workspace: Workspace(name: "办公", coreAppBundleIDs: ["com.jetbrains.goland"])
+        )
+        check("windowed idle app does not suggest freeze", windowedIdle.suggestedAction != .freeze)
 
         check("chronod is not suggestable", !UserFacingAppPolicy.isSuggestable(bundleID: "com.apple.chronod", processName: "chronod"))
         check("controlstrip is not auto eligible", !UserFacingAppPolicy.isAutoEligible(bundleID: "com.apple.controlstrip", processName: "Control Strip"))
@@ -265,7 +146,7 @@ enum StewardChecks {
         )
         cachedExecutor.reuseWindowOwnerPIDs = false
 
-        let emptyPrevious: Set<Int32> = []
+        let emptyPrevious: Set<String> = []
         let frozenOnce = [
             FrozenProcess(pid: 42, bundleID: "com.example.app", processName: "Example", action: .freeze)
         ]
@@ -301,7 +182,7 @@ enum StewardChecks {
 
         check("threshold none", ReclaimScorer.suggestedAction(for: 10) == .none)
         check("threshold throttle", ReclaimScorer.suggestedAction(for: 30) == .throttle)
-        check("threshold freeze", ReclaimScorer.suggestedAction(for: 60) == .freeze)
+        check("threshold mid-score is throttle not freeze", ReclaimScorer.suggestedAction(for: 60) == .throttle)
         check("threshold quit", ReclaimScorer.suggestedAction(for: 85) == .quit)
 
         let launchd = ReclaimScorer.score(
@@ -435,7 +316,7 @@ enum StewardChecks {
                 memoryFootprintMB: 800, cpuPercent: 2, isForeground: false, idleSeconds: 600
             )
         )
-        check("refuses to freeze tencent meeting", !refuseMeetingResult.ok && refuseMeetingResult.message.contains("音视频"))
+        check("refuses to freeze tencent meeting", !refuseMeetingResult.ok && refuseMeetingResult.message.contains("冻结"))
 
         let refuseWeChat = ActionExecutor()
         refuseWeChat.isUnsafeToFreeze = { _, _ in false }
@@ -446,7 +327,7 @@ enum StewardChecks {
                 memoryFootprintMB: 600, cpuPercent: 1, isForeground: false, idleSeconds: 600
             )
         )
-        check("refuses to freeze wechat", !refuseWeChatResult.ok && refuseWeChatResult.message.contains("即时"))
+        check("refuses to freeze wechat", !refuseWeChatResult.ok && refuseWeChatResult.message.contains("冻结"))
 
         let refuseWeChatThrottle = ActionExecutor().execute(
             action: .throttle,
@@ -466,7 +347,7 @@ enum StewardChecks {
                 memoryFootprintMB: 200, cpuPercent: 1, isForeground: false, idleSeconds: 600
             )
         )
-        check("refuses to freeze raycast", !refuseRaycastResult.ok && refuseRaycastResult.message.contains("辅助"))
+        check("refuses to freeze raycast", !refuseRaycastResult.ok && refuseRaycastResult.message.contains("冻结"))
 
         let refuseFan = ActionExecutor().execute(
             action: .throttle,
@@ -486,7 +367,7 @@ enum StewardChecks {
                 memoryFootprintMB: 140, cpuPercent: 0, isForeground: false, idleSeconds: 600
             )
         )
-        check("refuses to freeze notes even if headless", !refuseNotesResult.ok && refuseNotesResult.message.contains("系统自带"))
+        check("refuses to freeze notes even if headless", !refuseNotesResult.ok && refuseNotesResult.message.contains("冻结"))
 
         let refuseOpenUsage = ActionExecutor()
         refuseOpenUsage.isUnsafeToFreeze = { _, _ in false }
@@ -497,7 +378,7 @@ enum StewardChecks {
                 memoryFootprintMB: 120, cpuPercent: 2, isForeground: false, idleSeconds: 600
             )
         )
-        check("refuses to freeze openusage", !refuseOpenUsageResult.ok && refuseOpenUsageResult.message.contains("监控"))
+        check("refuses to freeze openusage", !refuseOpenUsageResult.ok && refuseOpenUsageResult.message.contains("冻结"))
 
         let blacklisted = ReclaimScorer.score(
             snapshot: ProcessSnapshot(
@@ -572,6 +453,55 @@ enum StewardChecks {
         check("chrome family grouped together", familyGroups.count == 1 && familyGroups[0].members.count == 2)
         check("chrome family key is parent", familyGroups.first?.key == "com.google.Chrome")
         check("chrome family counts companions", familyGroups.first?.companionCount == 1)
+
+        let exampleMain = ProcessSnapshot(
+            pid: 20, uid: 501, bundleID: "com.example.app", processName: "Example",
+            path: "/Applications/Example.app/Contents/MacOS/Example",
+            memoryFootprintMB: 80, cpuPercent: 1, isForeground: false, idleSeconds: 10
+        )
+        let exampleChild = ProcessSnapshot(
+            pid: 21, uid: 501, bundleID: nil, processName: "ExampleWorker",
+            path: "/Applications/Example.app/Contents/MacOS/ExampleWorker",
+            memoryFootprintMB: 20, cpuPercent: 0, isForeground: false, idleSeconds: 10,
+            parentPID: 20
+        )
+        let exampleHint = AppProcessHint(
+            pid: 20,
+            bundleID: "com.example.app",
+            name: "Example",
+            bundlePath: "/Applications/Example.app",
+            executablePath: "/Applications/Example.app/Contents/MacOS/Example"
+        )
+        let treeKeys = ProcessGrouper.keys(snapshots: [exampleMain, exampleChild], hints: [exampleHint])
+        check("parent pid child joins running app group", treeKeys[20] == "com.example.app" && treeKeys[21] == "com.example.app")
+        let noHintKeys = ProcessGrouper.keys(snapshots: [exampleMain, exampleChild])
+        check(
+            "parent tree joins without hints",
+            noHintKeys[20] == "com.example.app" && noHintKeys[21] == "com.example.app"
+        )
+        check(
+            "path inside app bundle",
+            ProcessGrouper.pathIsInside(
+                "/Applications/Example.app/Contents/MacOS/ExampleWorker",
+                directory: "/Applications/Example.app"
+            )
+        )
+        check(
+            "path outside app bundle",
+            !ProcessGrouper.pathIsInside("/usr/bin/yes", directory: "/Applications/Example.app")
+        )
+        let orphan = ProcessSnapshot(
+            pid: 22, uid: 501, bundleID: "com.other.app", processName: "Other",
+            path: "/Applications/Other.app/Contents/MacOS/Other",
+            memoryFootprintMB: 10, cpuPercent: 0, isForeground: false, idleSeconds: 10
+        )
+        let mixedKeys = ProcessGrouper.keys(snapshots: [exampleMain, orphan], hints: [exampleHint])
+        check("unrelated apps stay separate", mixedKeys[20] != mixedKeys[22])
+
+        let sameGen = ProcessGeneration(pid: 42, startUnix: 100.5)
+        check("generation matches same start", sameGen.sameGeneration(ProcessGeneration(pid: 42, startUnix: 100.5)))
+        check("generation rejects reused pid", !sameGen.sameGeneration(ProcessGeneration(pid: 42, startUnix: 200)))
+        check("unknown generation does not match known", !ProcessGeneration(pid: 42).sameGeneration(sameGen))
 
         let helperInWorkspace = ReclaimScorer.score(
             snapshot: chromeRendererSnap,
@@ -860,63 +790,32 @@ enum StewardChecks {
             )
         }
 
-        let sleeper = Process()
-        sleeper.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        sleeper.arguments = ["8"]
-        try sleeper.run()
-        let sleepPID = Int32(sleeper.processIdentifier)
-        let freezeSnapshot = ProcessSnapshot(
-            pid: sleepPID,
-            uid: UInt32(getuid()),
-            bundleID: nil,
-            processName: "sleep",
-            memoryFootprintMB: 1,
-            cpuPercent: 0,
-            isForeground: false,
-            idleSeconds: 120
-        )
-        let executor = ActionExecutor()
-        executor.isUnsafeToFreeze = { _, _ in false }
-        let freezeResult = executor.execute(action: .freeze, snapshot: freezeSnapshot)
-        check("freeze sleep succeeds", freezeResult.ok)
-
-        let sleeperWindow = Process()
-        sleeperWindow.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        sleeperWindow.arguments = ["8"]
-        try sleeperWindow.run()
-        let windowPID = Int32(sleeperWindow.processIdentifier)
-        let refuseWindowed = ActionExecutor()
-        refuseWindowed.isUnsafeToFreeze = { _, _ in true }
-        let refuseWindowedResult = refuseWindowed.execute(
+        let retiredFreeze = ActionExecutor().execute(
             action: .freeze,
             snapshot: ProcessSnapshot(
-                pid: windowPID,
+                pid: 42,
                 uid: UInt32(getuid()),
-                bundleID: "com.apple.Notes",
-                processName: "Notes",
-                memoryFootprintMB: 140,
+                bundleID: "com.example.app",
+                processName: "Example",
+                memoryFootprintMB: 1,
                 cpuPercent: 0,
                 isForeground: false,
-                ownsWindows: true,
-                idleSeconds: 180
+                idleSeconds: 120
             )
         )
-        check("refuses to freeze windowed app", !refuseWindowedResult.ok && refuseWindowedResult.message.contains("窗口"))
-        check("windowed refuse leaves process running", SystemMonitor().processStatus(pid: windowPID) != 4)
-        sleeperWindow.terminate()
-        sleeperWindow.waitUntilExit()
-        check("frozen pid is tracked", executor.isFrozen(pid: sleepPID))
-        check("frozen sleep is SSTOP", SystemMonitor().processStatus(pid: sleepPID) == 4)
+        check("freeze action is retired", !retiredFreeze.ok && retiredFreeze.message.contains("停用冻结"))
 
-        try store.replaceFrozen(executor.frozenProcesses)
+        try store.replaceFrozen([
+            FrozenProcess(
+                pid: 42,
+                bundleID: "com.example.app",
+                processName: "Example",
+                action: .freeze,
+                startUnix: 100
+            )
+        ])
         let loadedFrozen = store.loadFrozen()
-        check("frozen persist roundtrip", loadedFrozen.contains(where: { $0.pid == sleepPID }))
-
-        let restoredExecutor = ActionExecutor()
-        restoredExecutor.isUnsafeToFreeze = { _, _ in false }
-        let restored = restoredExecutor.restorePersisted(store.loadFrozen())
-        check("restore keeps process stopped", SystemMonitor().processStatus(pid: sleepPID) == 4)
-        check("restore tracks pid", restoredExecutor.isFrozen(pid: sleepPID) && restored.contains(where: { $0.pid == sleepPID }))
+        check("frozen persist roundtrip", loadedFrozen.contains(where: { $0.pid == 42 && $0.startUnix == 100 }))
 
         let skippedKeepAlive = ActionExecutor().restorePersisted([
             FrozenProcess(pid: 1_000_001, bundleID: "dev.kdrag0n.MacVirt.vmgr", processName: "OrbStack Helper", action: .freeze)
@@ -928,72 +827,89 @@ enum StewardChecks {
             FrozenProcess(pid: 1_000_002, bundleID: "com.apple.Notes", processName: "Notes", action: .freeze)
         ])
         check("restore does not re-freeze windowed app", skippedWindowedRestored.isEmpty)
-
-        _ = executor.thaw(pid: sleepPID)
-        let reapplied = restoredExecutor.restorePersisted(store.loadFrozen())
-        check("restore re-freezes after resume", SystemMonitor().processStatus(pid: sleepPID) == 4 && reapplied.contains(where: { $0.pid == sleepPID }))
-
-        let thawResult = restoredExecutor.thaw(pid: sleepPID)
-        check("thaw sleep succeeds", thawResult.ok)
-
-        let sleeperOpen = Process()
-        sleeperOpen.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        sleeperOpen.arguments = ["8"]
-        try sleeperOpen.run()
-        let openPID = Int32(sleeperOpen.processIdentifier)
-        let openExecutor = ActionExecutor()
-        openExecutor.isUnsafeToFreeze = { _, _ in false }
-        check(
-            "freeze for dock-thaw",
-            openExecutor.execute(
+        let skippedUnknownGen = ActionExecutor()
+        skippedUnknownGen.isUnsafeToFreeze = { _, _ in false }
+        let skippedUnknown = skippedUnknownGen.restorePersisted([
+            FrozenProcess(
+                pid: 1_000_004,
+                bundleID: "com.example.old",
+                processName: "Old",
                 action: .freeze,
-                snapshot: ProcessSnapshot(
-                    pid: openPID,
-                    uid: UInt32(getuid()),
-                    bundleID: "com.example.frozen",
-                    processName: "Example",
-                    memoryFootprintMB: 1,
-                    cpuPercent: 0,
-                    isForeground: false,
-                    idleSeconds: 120
-                )
-            ).ok
+                startUnix: 0
+            )
+        ])
+        check("restore skips unknown generation", skippedUnknown.isEmpty)
+
+        let throttleSleep = Process()
+        throttleSleep.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        throttleSleep.arguments = ["8"]
+        try throttleSleep.run()
+        let throttlePID = Int32(throttleSleep.processIdentifier)
+        errno = 0
+        let originalNice = getpriority(PRIO_PROCESS, UInt32(bitPattern: throttlePID))
+        let throttleExecutor = ActionExecutor()
+        throttleExecutor.isUnsafeToFreeze = { _, _ in false }
+        let throttleResult = throttleExecutor.execute(
+            action: .throttle,
+            snapshot: ProcessSnapshot(
+                pid: throttlePID,
+                uid: UInt32(getuid()),
+                bundleID: nil,
+                processName: "sleep",
+                memoryFootprintMB: 1,
+                cpuPercent: 0,
+                isForeground: false,
+                idleSeconds: 120
+            )
         )
-        check("unrelated activation leaves freeze", openExecutor.thawMatchingActivation(bundleID: "com.apple.Safari", processName: "Safari") == 0)
-        check("still frozen after unrelated open", SystemMonitor().processStatus(pid: openPID) == 4)
-        check("dock thaw resumes matching freeze", openExecutor.thawMatchingActivation(bundleID: "com.example.frozen", processName: "Example") == 1)
-        check("dock thaw process running", SystemMonitor().processStatus(pid: openPID) != 4)
-        sleeperOpen.terminate()
+        check("throttle sleep succeeds", throttleResult.ok && throttleExecutor.isThrottled(pid: throttlePID))
+        check("throttle ledger keeps original nice", throttleExecutor.originalNice(pid: throttlePID) == originalNice)
+        let unthrottleResult = throttleExecutor.unthrottle(pid: throttlePID)
+        errno = 0
+        let restoredNice = getpriority(PRIO_PROCESS, UInt32(bitPattern: throttlePID))
+        if unthrottleResult.ok {
+            check("unthrottle restores original nice", restoredNice == originalNice && !throttleExecutor.isThrottled(pid: throttlePID))
+        } else {
+            check(
+                "unthrottle keeps ledger when kernel refuses to raise nice",
+                throttleExecutor.isThrottled(pid: throttlePID)
+                    && throttleExecutor.originalNice(pid: throttlePID) == originalNice
+            )
+        }
+        throttleSleep.terminate()
+        throttleSleep.waitUntilExit()
 
-        let sleeper2 = Process()
-        sleeper2.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        sleeper2.arguments = ["8"]
-        try sleeper2.run()
-        let sleepPID2 = Int32(sleeper2.processIdentifier)
-        let freezeSnapshot2 = ProcessSnapshot(
-            pid: sleepPID2,
-            uid: UInt32(getuid()),
-            bundleID: nil,
-            processName: "sleep",
-            memoryFootprintMB: 1,
-            cpuPercent: 0,
-            isForeground: false,
-            idleSeconds: 120
+        var storedSettings = AppSettings()
+        storedSettings.authorizationLevel = .sceneSwitch
+        storedSettings.hasCompletedOnboarding = true
+        try store.saveSettings(storedSettings)
+        check("level1 settings persist", store.loadSettings().authorizationLevel == .sceneSwitch)
+
+        let decodedLegacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data("""
+            {"weights":{"idle":30,"memory":25,"restartability":15,"workspace":80,"foreground":999,"idleCapMinutes":120,"memoryCapMB":8192,"noneBelow":30,"throttleBelow":60,"freezeBelow":85},"matchingWindowMinutes":12,"matchingThreshold":0.2,"sampleIntervalSeconds":3,"hasCompletedOnboarding":true,"showOnlyActionable":false}
+            """.utf8)
         )
-        let quitExecutor = ActionExecutor()
-        quitExecutor.isUnsafeToFreeze = { _, _ in false }
-        check("quit-path freeze", quitExecutor.execute(action: .freeze, snapshot: freezeSnapshot2).ok)
-        check("quit-path frozen", SystemMonitor().processStatus(pid: sleepPID2) == 4)
-        quitExecutor.thawAll()
-        check("thawAll on quit resumes", SystemMonitor().processStatus(pid: sleepPID2) != 4)
-        check("thawAll clears freeze list", quitExecutor.frozenProcesses.isEmpty)
-        sleeper2.terminate()
-        sleeper2.waitUntilExit()
+        check("legacy settings default to level0", decodedLegacy.authorizationLevel == .suggestOnly && decodedLegacy.matchingWindowMinutes == 12)
+        check("legacy jaccard threshold migrates to evidence", abs(decodedLegacy.matchingThreshold - 0.6) < 0.0001)
+        check(
+            "legacy scoring caps migrate",
+            abs(decodedLegacy.weights.idleCapMinutes - 45) < 0.1
+                && abs(decodedLegacy.weights.memoryCapMB - 2048) < 0.1
+                && decodedLegacy.scoringRevision == 1
+                && abs(decodedLegacy.weights.offWorkspace - 28) < 0.1
+        )
+        let decodedAuto = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data("""
+            {"authorizationLevel":2,"weights":{"idle":30,"memory":25,"restartability":15,"workspace":80,"foreground":999,"idleCapMinutes":120,"memoryCapMB":8192,"noneBelow":30,"throttleBelow":60,"freezeBelow":85},"matchingWindowMinutes":10,"matchingThreshold":0.2,"sampleIntervalSeconds":3,"hasCompletedOnboarding":true,"showOnlyActionable":false}
+            """.utf8)
+        )
+        check("level2 settings coerce to level0", decodedAuto.authorizationLevel == .suggestOnly)
+        check("level1 available", AuthorizationLevel.sceneSwitch.isAvailable)
+        check("level2 unavailable", !AuthorizationLevel.fullyAutomatic.isAvailable)
 
-        sleeper.terminate()
-        sleeper.waitUntilExit()
-
-        failures.append(contentsOf: try V2Checks.run())
         failures.append(contentsOf: try JevChecks.run())
 
         if failures.isEmpty {

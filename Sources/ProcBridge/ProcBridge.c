@@ -53,8 +53,10 @@ int rs_sample_processes(RSProcSample *out, int max_count) {
         RSProcSample sample;
         memset(&sample, 0, sizeof(sample));
         sample.pid = (int32_t)pid;
+        sample.ppid = (int32_t)bsd.pbi_ppid;
         sample.uid = (uint32_t)bsd.pbi_uid;
         sample.start_unix = bsd.pbi_start_tvsec;
+        sample.start_usec = (uint32_t)bsd.pbi_start_tvusec;
 
         if (proc_name(pid, sample.name, (uint32_t)sizeof(sample.name)) <= 0) {
             strncpy(sample.name, bsd.pbi_name, sizeof(sample.name) - 1);
@@ -142,6 +144,25 @@ int rs_process_status(int32_t pid) {
         return -1;
     }
     return (int)bsd.pbi_status;
+}
+
+int rs_process_generation(int32_t pid, uint64_t *start_sec, uint32_t *start_usec) {
+    if (pid <= 0) {
+        return -1;
+    }
+    struct proc_bsdinfo bsd;
+    memset(&bsd, 0, sizeof(bsd));
+    int got = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, (int)sizeof(bsd));
+    if (got <= 0) {
+        return -1;
+    }
+    if (start_sec) {
+        *start_sec = (uint64_t)bsd.pbi_start_tvsec;
+    }
+    if (start_usec) {
+        *start_usec = (uint32_t)bsd.pbi_start_tvusec;
+    }
+    return 0;
 }
 
 int rs_host_cpu_ticks(RSHostCPUTicks *out) {

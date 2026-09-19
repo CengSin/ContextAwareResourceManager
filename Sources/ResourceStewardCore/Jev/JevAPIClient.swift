@@ -1,5 +1,30 @@
 import Foundation
 
+public struct JevPayloadResult: Sendable {
+    public var requestID: String
+    public var model: String
+    public var answersJSON: Data
+    public var usage: JevUsage
+    public var httpStatus: Int
+    public var latencyMs: Int
+
+    public init(
+        requestID: String,
+        model: String,
+        answersJSON: Data,
+        usage: JevUsage = .init(),
+        httpStatus: Int,
+        latencyMs: Int
+    ) {
+        self.requestID = requestID
+        self.model = model
+        self.answersJSON = answersJSON
+        self.usage = usage
+        self.httpStatus = httpStatus
+        self.latencyMs = latencyMs
+    }
+}
+
 public protocol JevClientProtocol: Sendable {
     func evaluate(
         state: JevRequestState,
@@ -8,6 +33,15 @@ public protocol JevClientProtocol: Sendable {
         endpoint: URL,
         model: String
     ) async throws -> JevClientResult
+
+    func evaluatePayload(
+        stateJSON: Data,
+        questionsJSON: Data,
+        apiKey: String,
+        requestID: String,
+        endpoint: URL,
+        model: String
+    ) async throws -> JevPayloadResult
 }
 
 public struct JevURLSessionClient: JevClientProtocol, Sendable {
@@ -81,16 +115,53 @@ public struct JevURLSessionClient: JevClientProtocol, Sendable {
         let modelID = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedModel = modelID.isEmpty ? JevQuestions.defaultModel : modelID
 
+        let payload = try await evaluatePayload(
+            stateJSON: JSONEncoder().encode(state),
+            questionsJSON: try JSONSerialization.data(withJSONObject: JevQuestions.payload()),
+            apiKey: trimmed,
+            requestID: requestID,
+            endpoint: endpoint,
+            model: resolvedModel
+        )
+        do {
+            return try JevResponseParser.parse(
+                data: wrapAnswers(payload),
+                requestID: payload.requestID,
+                httpStatus: payload.httpStatus,
+                latencyMs: payload.latencyMs
+            )
+        } catch let error as JevClientError {
+            throw error
+        } catch {
+            throw JevClientError.parse(error.localizedDescription)
+        }
+    }
+
+    public func evaluatePayload(
+        stateJSON: Data,
+        questionsJSON: Data,
+        apiKey: String,
+        requestID: String,
+        endpoint: URL,
+        model: String
+    ) async throws -> JevPayloadResult {
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw JevClientError.missingAPIKey }
+        let modelID = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedModel = modelID.isEmpty ? JevQuestions.defaultModel : modelID
+
         var request = URLRequest(url: endpoint, timeoutInterval: timeoutSeconds)
         request.httpMethod = "POST"
         request.setValue("Bearer \(trimmed)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(requestID, forHTTPHeaderField: "X-Request-Id")
 
+        let stateObj = try JSONSerialization.jsonObject(with: stateJSON)
+        let questionsObj = try JSONSerialization.jsonObject(with: questionsJSON)
         let body: [String: Any] = [
-            "state": try jsonObject(state),
+            "state": stateObj,
             "model": resolvedModel,
-            "questions": JevQuestions.payload()
+            "questions": questionsObj
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
@@ -113,25 +184,49 @@ public struct JevURLSessionClient: JevClientProtocol, Sendable {
             let snippet = String(data: data, encoding: .utf8) ?? ""
             throw JevClientError.httpStatus(status, redactSecrets(snippet))
         }
-
-        do {
-            let parsed = try JevResponseParser.parse(
-                data: data,
-                requestID: requestID,
-                httpStatus: status,
-                latencyMs: latencyMs
-            )
-            return parsed
-        } catch let error as JevClientError {
-            throw error
-        } catch {
-            throw JevClientError.parse(error.localizedDescription)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let answers = root["answers"] else {
+            throw JevClientError.parse("missing answers")
         }
+        let answersJSON = try JSONSerialization.data(withJSONObject: answers)
+        var usage = JevUsage()
+        if let usageObj = root["usage"] as? [String: Any] {
+            usage = JevUsage(
+                inputTokens: intNumber(usageObj["input_tokens"]),
+                outputTokens: intNumber(usageObj["output_tokens"])
+            )
+        }
+        return JevPayloadResult(
+            requestID: requestID,
+            model: (root["model"] as? String) ?? resolvedModel,
+            answersJSON: answersJSON,
+            usage: usage,
+            httpStatus: status,
+            latencyMs: latencyMs
+        )
     }
 
-    private func jsonObject<T: Encodable>(_ value: T) throws -> Any {
-        let data = try JSONEncoder().encode(value)
-        return try JSONSerialization.jsonObject(with: data)
+    private func wrapAnswers(_ payload: JevPayloadResult) throws -> Data {
+        let answers = try JSONSerialization.jsonObject(with: payload.answersJSON)
+        let root: [String: Any] = [
+            "model": payload.model,
+            "answers": answers,
+            "usage": [
+                "input_tokens": payload.usage.inputTokens as Any,
+                "output_tokens": payload.usage.outputTokens as Any
+            ]
+        ]
+        return try JSONSerialization.data(withJSONObject: root)
+    }
+
+    private func intNumber(_ raw: Any?) -> Int? {
+        switch raw {
+        case let v as Int: return v
+        case let v as Double: return Int(v)
+        case let v as NSNumber: return v.intValue
+        case let v as String: return Int(v)
+        default: return nil
+        }
     }
 
     private func redactSecrets(_ text: String) -> String {
@@ -252,6 +347,8 @@ public struct JevMockClient: JevClientProtocol, Sendable {
         self.onEvaluate = onEvaluate
     }
 
+    public var payloadResult: Result<JevPayloadResult, JevClientError>?
+
     public func evaluate(
         state: JevRequestState,
         apiKey: String,
@@ -274,6 +371,31 @@ public struct JevMockClient: JevClientProtocol, Sendable {
                 latencyMs: value.latencyMs,
                 fromCache: false
             )
+            return value
+        case .failure(let error):
+            throw error
+        }
+    }
+
+    public func evaluatePayload(
+        stateJSON: Data,
+        questionsJSON: Data,
+        apiKey: String,
+        requestID: String,
+        endpoint: URL,
+        model: String
+    ) async throws -> JevPayloadResult {
+        _ = stateJSON
+        _ = questionsJSON
+        _ = apiKey
+        _ = endpoint
+        _ = model
+        guard let payloadResult else {
+            throw JevClientError.parse("mock payload not configured")
+        }
+        switch payloadResult {
+        case .success(var value):
+            value.requestID = requestID
             return value
         case .failure(let error):
             throw error

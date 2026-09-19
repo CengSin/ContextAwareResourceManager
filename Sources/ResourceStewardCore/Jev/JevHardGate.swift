@@ -1,6 +1,7 @@
 import Foundation
 
-/// Local hard gates always win. Jev is never called when any gate matches.
+/// Local hard gates always win. Consult skips prevent calling Jev.
+/// Freeze is retired: any freeze choice is clamped to throttle.
 public enum JevHardGate: Sendable {
     public struct Candidate: Sendable, Equatable {
         public var pid: Int32
@@ -73,24 +74,10 @@ public enum JevHardGate: Sendable {
         }
     }
 
+    /// Who Jev may see. Window ownership is not a consult skip.
     public static func skipReason(for candidate: Candidate) -> (JevHardGateReason, String)? {
         if candidate.isForeground {
             return (.foreground, "foreground")
-        }
-        if candidate.inCurrentWorkspace {
-            return (.inWorkspaceCore, "in_current_workspace_core")
-        }
-        if candidate.ownsWindows {
-            return (.ownsWindows, "owns_windows")
-        }
-        if let owners = candidate.windowOwnerPIDs,
-           candidate.pid > 0,
-           WindowedProcessPolicy.isUnsafeToFreeze(
-               pid: candidate.pid,
-               bundleID: candidate.bundleID.isEmpty ? nil : candidate.bundleID,
-               ownerPIDs: owners
-           ) {
-            return (.ownsWindows, "windowed_process_policy")
         }
         if candidate.membersAreCompanionOnly
             || ProcessFamily.isCompanion(bundleID: candidate.bundleID, processName: candidate.processName) {
@@ -129,8 +116,41 @@ public enum JevHardGate: Sendable {
         return nil
     }
 
-    /// Gray-zone = hard gates passed (unknown / third-party reclaim candidates).
+    /// Gray-zone = consult gates passed. Windowed third-party apps can still be asked.
     public static func isGrayZone(_ candidate: Candidate) -> Bool {
         skipReason(for: candidate) == nil
+    }
+
+    /// `SIGSTOP` is unsafe when this candidate (or another PID in the same bundle) owns compositor windows.
+    public static func isUnsafeToFreeze(_ candidate: Candidate) -> Bool {
+        if candidate.ownsWindows { return true }
+        guard let owners = candidate.windowOwnerPIDs, candidate.pid > 0 else { return false }
+        return WindowedProcessPolicy.isUnsafeToFreeze(
+            pid: candidate.pid,
+            bundleID: candidate.bundleID.isEmpty ? nil : candidate.bundleID,
+            ownerPIDs: owners
+        )
+    }
+
+    public static func freezeCeilingReason(for candidate: Candidate) -> (JevHardGateReason, String)? {
+        if candidate.ownsWindows {
+            return (.ownsWindows, "owns_windows")
+        }
+        if let owners = candidate.windowOwnerPIDs,
+           candidate.pid > 0,
+           WindowedProcessPolicy.isUnsafeToFreeze(
+               pid: candidate.pid,
+               bundleID: candidate.bundleID.isEmpty ? nil : candidate.bundleID,
+               ownerPIDs: owners
+           ) {
+            return (.ownsWindows, "windowed_process_policy")
+        }
+        return nil
+    }
+
+    /// Freeze is retired. Windowed apps may still be asked; quit is allowed.
+    public static func clampAction(_ action: SuggestedAction, for candidate: Candidate) -> SuggestedAction {
+        _ = candidate
+        return action.withoutFreeze()
     }
 }

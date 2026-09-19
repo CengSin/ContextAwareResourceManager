@@ -36,7 +36,7 @@ struct ProcessListView: View {
             }
 
             HStack {
-                Text("按可处理分数排序")
+                Text("按占用与建议排序")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -69,13 +69,18 @@ struct ProcessListView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(displayedGroups) { group in
-                            ProcessGroupRow(group: group, expanded: expandedID == group.id)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    expandedID = expandedID == group.id ? nil : group.id
-                                }
+                            ProcessGroupRow(
+                                group: group,
+                                expanded: expandedID == group.id,
+                                isFavorite: coordinator.isFavorite(group)
+                            )
+                            .equatable()
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                expandedID = expandedID == group.id ? nil : group.id
+                            }
                             Divider().padding(.leading, 42)
                         }
                     }
@@ -104,7 +109,7 @@ struct ProcessListView: View {
             return "没有匹配「\(needle)」的进程"
         }
         if coordinator.settings.showOnlyActionable {
-            return "没有达到冻结/降优先级阈值的用户应用。场景内、前台、常用和系统进程不会出现在这里。关掉「只看建议」可看全部。"
+            return "没有建议降级或退出的灰区应用。前台、常用和系统进程不会出现在这里。关掉「只看建议」可看全部。"
         }
         return "正在采集进程…"
     }
@@ -121,10 +126,10 @@ struct ProcessListView: View {
 
     private var frozenSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("已冻结")
+            Text("旧版本留下的冻结进程")
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 14)
-            Text("退出管家时会自动解冻。")
+            Text("冻结已停用。请恢复这些进程，退出管家时也会自动解冻。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 14)
@@ -151,10 +156,17 @@ struct ProcessListView: View {
     }
 }
 
-private struct ProcessGroupRow: View {
+private struct ProcessGroupRow: View, Equatable {
     @EnvironmentObject private var coordinator: AppCoordinator
     let group: ProcessGroupViewModel
     let expanded: Bool
+    let isFavorite: Bool
+
+    nonisolated static func == (lhs: ProcessGroupRow, rhs: ProcessGroupRow) -> Bool {
+        lhs.expanded == rhs.expanded
+            && lhs.isFavorite == rhs.isFavorite
+            && lhs.group == rhs.group
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -172,20 +184,13 @@ private struct ProcessGroupRow: View {
                                 .padding(.vertical, 1)
                                 .background(Color.green.opacity(0.18), in: Capsule())
                         }
-                        if group.score.isInCurrentWorkspace {
-                            Text("场景内")
-                                .font(.system(size: 9, weight: .semibold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.blue.opacity(0.15), in: Capsule())
-                        }
                         if group.isKeepAlive {
                             Text("常驻")
                                 .font(.system(size: 9, weight: .semibold))
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(Color.purple.opacity(0.16), in: Capsule())
-                        } else if coordinator.isFavorite(group) {
+                        } else if isFavorite {
                             Text("常用")
                                 .font(.system(size: 9, weight: .semibold))
                                 .padding(.horizontal, 5)
@@ -266,18 +271,16 @@ private struct ProcessGroupRow: View {
                     }
                 }
                 HStack {
-                    if group.appliedAction != .freeze {
-                        ForEach(alternateActions, id: \.rawValue) { action in
-                            Button(action.title) {
-                                coordinator.request(action, for: group)
-                            }
-                            .controlSize(.mini)
-                            .disabled(group.isForeground || group.isProtected)
+                    ForEach(alternateActions, id: \.rawValue) { action in
+                        Button(action.title) {
+                            coordinator.request(action, for: group)
                         }
+                        .controlSize(.mini)
+                        .disabled(group.isForeground || group.isProtected)
                     }
                     Spacer()
                     if canMarkFavorite {
-                        Button(coordinator.isFavorite(group) ? "取消常用" : "设为常用") {
+                        Button(isFavorite ? "取消常用" : "设为常用") {
                             coordinator.toggleFavorite(group)
                         }
                         .controlSize(.mini)
@@ -302,7 +305,7 @@ private struct ProcessGroupRow: View {
     }
 
     private var alternateActions: [SuggestedAction] {
-        SuggestedAction.allCases.filter { $0 != .none && $0 != group.effectiveSuggestion }
+        SuggestedAction.userSelectable.filter { $0 != group.effectiveSuggestion }
     }
 
     private var statusAction: SuggestedAction {

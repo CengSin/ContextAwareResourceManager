@@ -23,8 +23,7 @@ struct StatusBarLabel: View {
             ? String(format: "GPU %.0f%%", coordinator.hostGPU.usagePercent)
             : "GPU 不可用"
         return String(
-            format: "场景管家 · %@ · CPU %.0f%% · %@ · RAM %@ / %@ · 内存压力 %@",
-            coordinator.match.displayName,
+            format: "资源管家 · CPU %.0f%% · %@ · RAM %@ / %@ · 内存压力 %@",
             coordinator.hostCPU.usagePercent,
             gpu,
             ram,

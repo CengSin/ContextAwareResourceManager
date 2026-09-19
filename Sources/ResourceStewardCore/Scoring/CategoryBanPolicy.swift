@@ -138,7 +138,6 @@ public enum CategoryBanPolicy: Sendable {
             return allows(.freeze, in: category) ? .freeze : .none
         case .quit:
             if allows(.quit, in: category) { return .quit }
-            if allows(.freeze, in: category) { return .freeze }
             if allows(.throttle, in: category) { return .throttle }
             return .none
         }

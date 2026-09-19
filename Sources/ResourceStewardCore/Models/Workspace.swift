@@ -63,3 +63,28 @@ public struct AppActivation: Sendable, Equatable {
         self.processName = processName
     }
 }
+
+public struct WorkspaceTransition: Sendable, Equatable, Identifiable {
+    public let id: Int64
+    public let fromWorkspaceID: UUID?
+    public let toWorkspaceID: UUID?
+    public let hourOfDay: Int
+    public let weekday: Int
+    public let timestamp: Date
+
+    public init(
+        id: Int64 = 0,
+        fromWorkspaceID: UUID?,
+        toWorkspaceID: UUID?,
+        hourOfDay: Int,
+        weekday: Int,
+        timestamp: Date
+    ) {
+        self.id = id
+        self.fromWorkspaceID = fromWorkspaceID
+        self.toWorkspaceID = toWorkspaceID
+        self.hourOfDay = hourOfDay
+        self.weekday = weekday
+        self.timestamp = timestamp
+    }
+}

@@ -22,14 +22,14 @@
 | 展示 per-process 内存/CPU 占用 | ✅ | `proc_pidinfo` 系接口，需标注"半私有" |
 | 判断当前工作场景（Workspace） | ✅ | 应用层信号，规则匹配 |
 | 对进程打分（Reclaim Score） | ✅ | 本地规则计算 |
-| 降低某进程 CPU 占用 | ✅ | `setpriority()` 或 `SIGSTOP/SIGCONT` |
-| 冻结/恢复某进程 | ✅ | `SIGSTOP/SIGCONT`，同用户进程无需 root |
+| 降低某进程 CPU 占用 | ✅ | `setpriority()` / `taskpolicy` |
+| 冻结/恢复某进程 | ❌ 已停用 | `SIGSTOP` 会卡住有窗 App 的 WindowServer；仅解冻旧版本残留 |
 | 退出某进程 | ✅ | `NSRunningApplication.terminate()` |
 | **直接压缩/回收其他进程的内存页** | ❌ 永久不可行 | 无公开 API，需要 kernel VM subsystem 权限 |
 | **获取其他进程 task port 并 suspend/resume 内存态** | ❌ 永久不可行 | 受 SIP + entitlement 限制 |
 | 读取其他 App 的窗口内容/剪贴板等敏感信息 | ❌ 不在范围内 | 隐私边界，非技术限制 |
 
-**UI 文案硬性要求**：任何"优化内存"相关的按钮/提示，其实际动作必须是"退出"或"冻结"，不能出现"压缩中""正在释放内存"等暗示直接内存回收的措辞。
+**UI 文案硬性要求**：任何"优化内存"相关的按钮/提示，其实际动作必须是"退出"或"降低优先级"，不能出现"压缩中""正在释放内存"等暗示直接内存回收的措辞。没有冻结。
 
 ---
 
@@ -194,74 +194,31 @@ score < 30           → .none
 score >= 85           → .quit       （仅当 App 无未保存内容提示时才建议）
 ```
 
-### 5.3 Action Executor 的诚实降级
+### 5.3 Action Executor
 
-```swift
-func execute(action: SuggestedAction, pid: pid_t) {
-    switch action {
-    case .throttle:
-        setpriority(PRIO_PROCESS, UInt32(pid), 15) // nice 值提高，降低调度优先级
-    case .freeze:
-        kill(pid, SIGSTOP)
-        // 记录 pid，供用户手动或场景切换时 SIGCONT 恢复
-    case .quit:
-        // 走 NSRunningApplication.terminate()，非 SIGKILL，
-        // 给 App 机会弹出"未保存"提示
-    case .none:
-        break
-    }
-}
-```
+产品动作只有 **保留 / 降低优先级 / 退出**。`.freeze` 一律拒绝（`已停用冻结`）。启动时仍会 `SIGCONT` 旧版本留下的冻结进程。
 
-**重要**：`.freeze` 和 `.quit` 都不产生"内存被回收"的直接效果，UI 展示的"预计可释放"数值应标注为"预计"，并说明是系统后续自然回收的结果，不是本工具直接完成的。
+- `.throttle`：`setpriority()` / `taskpolicy`，记下 `originalNice`，只还原自己改过的
+- `.quit`：`NSRunningApplication.terminate()`，非 SIGKILL
+- PID + 内核启动时间对不上视为 PID 复用，拒绝并丢掉本工具账本
+- 不单独处理 Helper / Renderer
 
-### 5.4 场景切换半自动（v2，授权 Level 1）
+**重要**：降低优先级不回收内存。UI「预计可释放」只统计建议退出的占用，并标明是系统后续自然回收，不是本工具直接完成的。
 
-触发条件（全部满足才自动处理）：
+### 5.4 授权级别与自动执行
 
-1. 授权级别为 Level 1（`sceneSwitch`）
-2. 当前场景是已分类 workspace（未分类不触发任何自动处理，与 5.1 一致）
-3. 启动后第一次匹配只采纳当前场景，不处理
-4. 场景 ID 变化时，新场景连续保持默认 15 秒再提交，避免证据分在阈值附近抖动
-5. **停留在同一已分类场景时也会处理**（不必再切一次）。只切场景才动手时，人整天停在「办公」就永远不会冻结后台 App
+决策者是 Jev，不是场景匹配，也不是本地分数阈值。
 
-处理范围：
+1. 采样系统负载（内存压力、CPU、内存占用）和正在运行的应用族
+2. 本地划灰区：排除前台、保护进程、VPN/VM、会议/录屏、IM、输入法/辅助、常用、accessory、非用户 App
+3. 把负载 + 灰区名单（最多 12 个，按内存）一次交给 Jev；每个 App 选择 `keep` / `throttle` / `quit`。不确定或失败 → 保留
+4. **Level 0**：Jev 给出降级/退出后弹窗，用户确认才执行
+5. **Level 1**：同一套决策自动执行（自动退出要求空闲至少约 30 秒）
+6. **Level 2**：不可用，写入配置会回退到 Level 0
 
-- **过滤器**：只处理 Reclaim Score 建议为 `.freeze` / `.quit` 的离场景**用户应用**。`.throttle` 不再自动执行（nice 值变化用户几乎无感，且容易误伤系统守护进程）。
-- **最短空闲**：距上次前台至少 2 分钟。刚 Cmd-Tab 走的 App 不会立刻被冻。
-- **离场景**：不在当前场景 `coreAppBundleIDs` 中、非前台、非保护、非黑名单。
-- **用户应用**：Dock 可见的常规 App（`activationPolicy == .regular`），路径含 `.app`。`com.apple.*` 仅允许 Safari / Music / Notes 等用户应用白名单；`chronod`、Control Strip、Widget、XPC 不建议也不自动处理。
-- **有窗口不冻结**：进程当前拥有参与合成的 CG 窗口（layer < 24、面积 ≥ 2×2）时，半自动与手动都不 `SIGSTOP`。WindowServer 会向这些进程索要 surface；冻住它们会导致内置屏 `Display not ready`，userspace watchdog 杀掉 WindowServer、图形会话重启。窗口列表读不到或读不全时，对 regular App 按有窗口处理。退出（`terminate()`）仍允许。
-- **常驻网络**：VPN / 代理 / Packet Tunnel（Shadowrocket、Clash、Surge、WireGuard、Tailscale 等）视为 Keep-Alive，分数归零，半自动与手动都不冻结。菜单栏 accessory 应用也不会被半自动处理。
-- **常驻计算**：容器 / 虚拟机运行时（OrbStack 含 `vmgr`、Docker Desktop、Colima、Podman、UTM 等）同样 Keep-Alive。冻结它们会暂停 Linux VM，MySQL 等容器写入会失败。OrbStack 的 `dev.kdrag0n.MacVirt.vmgr` 并入主应用族，不单独打分。
-- **类别禁止（CategoryBanPolicy）**：用户不需要知道哪些 bundle 能冻。VPN/虚拟机名单仍只维护在 KeepAlivePolicy，类别层只组合。打分不会建议被禁动作；Action Executor 拒绝手动 `.throttle` / `.freeze`；Level 1 不对整类自动处理。有窗口的进程仍由 WindowedProcessPolicy 失败关闭，不因类别放宽。
+工作场景匹配、切场景冻结、分类表自动回收不再驱动动作。
 
-  | 类别 | banThrottle | banFreeze | allowSuggestQuit |
-  |---|---|---|---|
-  | `audioMeetingScreen` 腾讯会议 / Screen Studio / 剪映 / Music / FaceTime / QuickTime | 是 | 是 | 否 |
-  | `instantMessaging` 微信 / 企业微信 / Telegram / Lark / 信息 | 是 | 是 | 是（或 `.none`） |
-  | `accessibilityInputShell` Raycast / Rime / Macs Fan Control / Touch Bar 替代等 | 是 | 是 | 否 |
-  | `appleWindowedUI` `UserFacingAppPolicy.appleUserBundleIDs`（Notes 等） | 否 | 是 | 是 |
-  | `localMonitorSelf` OpenUsage / `cc.resourcesteward.app` | 是 | 是 | 否 |
-  | `keepAlive` 组合 KeepAlivePolicy | 是 | 是 | 否 |
-- **用户常用**：用户可在「常用」页勾选任意 App（跨场景保活）。分数归零，半自动与手动都不冻结；Helper 随主应用一起保护。与场景核心 App 不同：常用不依赖当前 workspace。
-- **半自动范围**：Level 1 只处理带 reverse-DNS bundle ID 的用户 App；`python` / `fontd` 这类进程名不会被自动冻结。
-- **动作降级**：Level 1 将 `.quit` 改成 `.freeze`，避免未保存窗口被自动关掉。
-- **恢复**：属于新场景核心 App 的已冻结进程会被 `SIGCONT` 恢复。用户从 Dock / Spotlight / Cmd-Tab 打开某个已冻结 App 时，按进程族解冻（含 Helper），不需要再到管家里点「恢复」。
-- **Level 0**：仍记录切换（见 5.5），但不自动执行。
-- **Level 2**：v3 才开放；当前若被写入配置会回退到 Level 0。
-
-### 5.5 Markov 转移矩阵（v2）
-
-每次**确认后的**场景切换写入 `workspace_transitions`：`from_id`、`to_id`（空字符串表示未分类）、`hour`（0–23）、`weekday`（1–7）、`timestamp`。`from == to` 不记。原始记录保留 180 天。
-
-预测 `P(to | from, t)`：
-
-1. 优先用同一小时的样本；样本数 < 3 则回退到同一时段（夜 0–5 / 上午 6–11 / 下午 12–17 / 晚上 18–23）
-2. 仍不足则回退到该 `from` 的全天样本
-3. Laplace 平滑 α = 1；候选集 = 用户定义的其他场景 + 未分类（当 `from` 已分类时）
-
-v2 **只记录和展示**，不改变 Reclaim Score，也不用预测结果阻止或预热自动处理（那是 v2.5）。
+灰区硬门（不进 Jev 名单）：前台、保护进程、VPN/VM、会议/录屏、IM、输入法/辅助、常用、菜单栏 accessory、非用户 App。有窗口可以进灰区。
 
 ### 5.6 进程族（Helper / Renderer）
 
@@ -272,12 +229,25 @@ Chrome、Edge、Brave、Electron 等应用会拆成主进程 + Helper / Renderer
 规则：
 
 - 以 `.helper` 为界把 bundle ID 收束到主应用（`….helper.renderer` → 主应用）
+- 再按 `NSRunningApplication` 主 PID、可执行文件是否在 `.app` 里、父 PID 树把没有特殊命名的子进程并进同一组
 - 列表按进程族合并，Helper 不单独占一行
 - 空闲、前台、场景归属继承主应用
 - 禁止只对 Helper / Renderer 执行 throttle / freeze / quit；要对就对整个应用一起做
 - 场景选择器不列出 Helper，避免用户把 Renderer 当成独立 App 加进场景
+- 冻结 / 降速 / 退出前核对 PID 的内核启动时间；对不上视为 PID 复用，拒绝操作并清掉本工具自己的账本
+- 只还原本工具改过的暂停和 nice 原值；不 SIGCONT 别人停掉的进程，不把 nice 抬回 0（除非原来就是 0）
 
 Safari 的 `com.apple.WebKit.WebContent` 会被多个 App 共用，不并入 Safari，也不在本次范围内按族处理。
+
+### 5.7 Jev 灰区回收（TypeSafe System One）
+
+Jev 是决策模型，不是 agent：只返回 typed Choice，不发信号。代码保持控制流和硬门。
+
+**一次请求**：state 含当前负载（压力、CPU、内存、前台 App）+ 灰区运行中 App 列表（空闲、占用、是否有窗）。每个 App 一个 Choice：`keep` / `throttle` / `quit`。冻结已停用，模型若仍返回 freeze，本地夹成 throttle。
+
+**合成**：confidence < 0.7 → 保留；`quit` 且 confidence < 0.85 → 降为 throttle。失败、超时、pending → 全部保留。
+
+**有窗口也可以问**；有窗不再是咨询禁令。退出走 `terminate()`。
 
 ---
 
@@ -289,7 +259,7 @@ Safari 的 `com.apple.WebKit.WebContent` 会被多个 App 共用，不并入 Saf
 | 前台 App 监听 | `NSWorkspace.didActivateApplicationNotification` | 无 | |
 | 进程列表/资源占用 | `proc_pidinfo`, `proc_pid_rusage` | 无（同用户） | Apple 标注为 private，未来可能变化，需做兼容层 |
 | 降优先级 | `setpriority()` | 无（同用户） | 标准 POSIX |
-| 冻结/恢复 | `kill(pid, SIGSTOP/SIGCONT)` | 无（同用户） | 沙盒环境下可能受限 |
+| 解冻旧残留 | `kill(pid, SIGCONT)` | 无（同用户） | 不再新发 SIGSTOP |
 | 退出 App | `NSRunningApplication.terminate()` | 无 | 公开 API |
 
 **分发方式**：不走 Mac App Store 沙盒（沙盒会限制向其他进程发信号），采用 Developer ID 签名 + Apple 公证（notarization）的 DMG 直接分发，与 App Tamer、CleanMyMac 路径一致。
@@ -300,25 +270,23 @@ Safari 的 `com.apple.WebKit.WebContent` 会被多个 App 共用，不并入 Saf
 
 - 菜单栏图标：常态显示当前 Memory Pressure 简要状态（颜色编码：绿/黄/红）
 - 点击展开面板：
-  - 顶部：Pressure / RAM / Compressed / Swap 数值
-  - 列表：Top 进程，展示 score 及其分项（悬浮或点击展开，不是默认全展开）
-  - 每项旁提供"应用建议"按钮（v1 默认不自动执行）
-- Workspace 管理页：用户手动创建/编辑 workspace，选择 core apps（从当前运行进程里勾选；办公场景典型是 JetBrains IDE + 终端，不必把一次用不到的软件都打开才能被识别）
-- 设置页：授权级别开关。v2 开放 Level 0 / Level 1；Level 2 可见但不可选
-- 场景页：展示当前时段「接下来最常切到」的预测（样本不足时说明原因）
+  - 顶部：Pressure / RAM / Compressed / Swap、CPU/GPU
+  - 列表：运行中应用族；建议来自 Jev（保留 / 降级 / 退出）
+  - Level 0：Jev 给出降级/退出后弹窗确认；Level 1 自动执行
+- 常用页：跨场景保活，不进灰区
+- 设置页：授权级别、Jev Key/URL、采样间隔。Level 2 可见但不可选
 
 ---
 
 ## 8. 版本路线
 
-### 8.1 v1（本文档范围）
-- Context Collector + System Monitor + Reclaim Scorer + Action Executor（手动确认）
-- Workspace 用户手动定义，规则匹配识别当前场景
-- 授权 Level 0：仅建议，用户点击执行
+### 8.1 当前
+- 负载 + 灰区运行中 App 一次交给 Jev
+- 动作：保留 / 降优先级 / 退出（无冻结）
+- Level 0 弹窗确认；Level 1 自动执行
 
-### 8.2 v2（本节已实现）
-- Workspace 切换触发的半自动处理（授权 Level 1：切场景稳定后自动处理离场景 App，quit 降级为 freeze）
-- Markov 转移矩阵记录 workspace 切换概率（按小时 / 时段 / 全天回退），仅展示不驱动打分
+### 8.2 已移除
+- 工作场景匹配、切场景自动冻结、Markov 预测、安装应用分类泵
 
 ### 8.3 v2.5
 - 关联规则挖掘（类 Apriori），捕捉"打开 A 后大概率短时间内打开 B"的模式

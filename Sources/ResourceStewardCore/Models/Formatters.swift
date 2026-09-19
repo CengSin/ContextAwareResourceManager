@@ -141,8 +141,8 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
     }
 
     public var appliedAction: SuggestedAction? {
-        if members.contains(where: { $0.appliedAction == .freeze }) { return .freeze }
         if members.contains(where: { $0.appliedAction == .throttle }) { return .throttle }
+        if members.contains(where: { $0.appliedAction == .freeze }) { return .freeze }
         return nil
     }
 
@@ -154,9 +154,9 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
 
     public var effectiveSuggestion: SuggestedAction {
         if isForeground { return .none }
-        if appliedAction == .freeze { return .none }
-        if appliedAction == .throttle && score.suggestedAction == .throttle { return .none }
-        return score.suggestedAction
+        let suggested = score.suggestedAction.withoutFreeze()
+        if appliedAction == .throttle && suggested == .throttle { return .none }
+        return suggested
     }
 }
 

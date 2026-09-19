@@ -11,7 +11,7 @@ struct OnboardingView: View {
                     .font(.system(size: 28))
                     .foregroundStyle(Theme.pressureColor(.normal))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("场景资源管家")
+                    Text("资源管家")
                         .font(.title3.weight(.semibold))
                     Text("先看清它能做什么、不能做什么")
                         .font(.callout)
@@ -22,18 +22,18 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 10) {
                 OnboardPoint(
                     icon: "rectangle.3.group",
-                    title: "理解当前工作场景",
-                    detail: "根据你定义的核心 App，判断现在哪些进程不那么重要。"
+                    title: "看负载和正在运行的灰区 App",
+                    detail: "前台、VPN/会议/IM、常用和系统进程不会进名单。其余正在运行的第三方 App 连同当前 CPU/内存压力一起交给 Jev。"
                 )
                 OnboardPoint(
                     icon: "hand.raised",
                     title: "不会直接压缩或回收内存",
-                    detail: "macOS 没有公开 API 能压缩其他进程的内存。本工具只做降优先级、冻结或请求退出。"
+                    detail: "macOS 没有公开 API 能压缩其他进程的内存。本工具只做降低优先级或请求退出，没有冻结。"
                 )
                 OnboardPoint(
                     icon: "pause.rectangle",
                     title: "默认只建议，半自动可在设置里打开",
-                    detail: "默认所有处理都要你确认。开启 Level 1 后，识别到工作场景就会冻结空闲约 2 分钟以上、且当前没有窗口的离场景应用，不必等再切一次场景。有窗口的应用不会冻结，避免卡住屏幕。退出建议会改成冻结。系统进程不会动。未分类不触发。可在「常用」里指定任何场景都不处理的应用；OrbStack / Docker 等容器运行时默认不会被冻结。"
+                    detail: "Level 0：Jev 给出保留/降级/退出后弹窗让你确认。Level 1：同一套决策自动执行。系统进程、VPN/容器和「常用」里的应用不会动。"
                 )
                 OnboardPoint(
                     icon: "questionmark.circle",
