@@ -199,7 +199,12 @@ private struct ProcessGroupRow: View, Equatable {
         VStack(alignment: .leading, spacing: 6) {
             // Main App Row
             HStack(alignment: .center, spacing: 10) {
-                AppIconView(path: group.appPath, size: 28)
+                AppIconView(
+                    path: group.appPath,
+                    bundleID: group.primary.snapshot.bundleID,
+                    processName: group.displayName,
+                    size: 28
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {

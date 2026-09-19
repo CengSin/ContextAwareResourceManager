@@ -110,8 +110,8 @@ struct MenuBarPanel: View {
                 }
                 .padding(.vertical, 2)
 
-                // Right: CPU & GPU Stat Bars
-                VStack(alignment: .leading, spacing: 8) {
+                // Right: CPU, GPU & Memory Stat Bars
+                VStack(alignment: .leading, spacing: 7) {
                     MinimalStatBar(
                         title: "CPU",
                         percent: coordinator.hostCPU.usagePercent,
@@ -127,17 +127,12 @@ struct MenuBarPanel: View {
                         available: coordinator.hostGPU.available
                     )
 
-                    HStack(spacing: 10) {
-                        Text("已用 \(ByteFormat.string(coordinator.hostMemory.usedBytes)) / \(ByteFormat.string(coordinator.hostMemory.physicalBytes))")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                        Spacer()
-                        Text("压缩 \(ByteFormat.string(coordinator.hostMemory.compressedBytes))")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                            .monospacedDigit()
-                    }
+                    MinimalStatBar(
+                        title: "内存",
+                        percent: ramPercent,
+                        detail: memoryDetail,
+                        color: Theme.pressureColor(coordinator.pressure)
+                    )
                 }
             }
             .modernCard(padding: 10)
@@ -261,24 +256,26 @@ struct MenuBarPanel: View {
         return Double(coordinator.hostMemory.usedBytes) / Double(coordinator.hostMemory.physicalBytes) * 100.0
     }
 
-    private var ramValue: String {
+    private var memoryDetail: String {
         let used = ByteFormat.string(coordinator.hostMemory.usedBytes)
         let total = ByteFormat.string(coordinator.hostMemory.physicalBytes)
-        return "\(used) / \(total)"
+        let compressed = ByteFormat.string(coordinator.hostMemory.compressedBytes)
+        return "已用 \(used) / \(total) · 压缩 \(compressed)"
     }
 
     private var gpuDetail: String {
         guard coordinator.hostGPU.available else { return "当前无法读取" }
-        let name = coordinator.hostGPU.displayName
-        if coordinator.hostGPU.memoryTotalBytes > 0 {
-            let used = ByteFormat.string(coordinator.hostGPU.memoryUsedBytes)
-            let total = ByteFormat.string(coordinator.hostGPU.memoryTotalBytes)
-            if name.contains("Intel") {
-                return "\(name)  共享显存 \(used) / \(total)"
+        let gpu = coordinator.hostGPU
+        let name = gpu.displayName
+        if gpu.memoryUsedBytes > 0 || gpu.memoryTotalBytes > 0 {
+            let used = ByteFormat.string(gpu.memoryUsedBytes)
+            if gpu.memoryTotalBytes > 0 {
+                let total = ByteFormat.string(gpu.memoryTotalBytes)
+                return "\(name) · \(gpu.memoryKindName) \(used) / \(total)"
             }
-            return "\(name)  显存 \(used) / \(total)"
+            return "\(name) · \(gpu.memoryKindName) \(used)"
         }
-        return "\(name)  引擎占用"
+        return "\(name) · 引擎占用"
     }
 
     private var matchCaption: String {

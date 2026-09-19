@@ -705,6 +705,9 @@ enum StewardChecks {
         if gpu.available {
             check("live gpu sample available", true)
             check("live gpu percent in range", gpu.usagePercent >= 0 && gpu.usagePercent <= 100)
+            if gpu.displayName.contains("Intel") {
+                check("live gpu intel total memory is 1.5GB", gpu.memoryTotalBytes == 1536 * 1024 * 1024)
+            }
         } else {
             print("skip live gpu sample (no IOAccelerator on this host)")
             check("live gpu unavailable is valid", gpu.usagePercent == 0)
@@ -712,6 +715,11 @@ enum StewardChecks {
         check("gpu median of one", abs(SystemMonitor.median([42]) - 42) < 0.0001)
         check("gpu median rejects spike", abs(SystemMonitor.median([8, 9, 100, 10, 11]) - 10) < 0.0001)
         check("gpu intel name", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "IntelAccelerator", available: true).displayName == "Intel GPU")
+        check("gpu intel shared memory", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "IntelAccelerator", available: true).isSharedMemory)
+        check("gpu intel memory kind", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "IntelAccelerator", available: true).memoryKindName == "共享显存")
+        check("gpu apple memory kind", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "AGXAcceleratorG13G", available: true).memoryKindName == "统一内存")
+        check("gpu amd memory kind", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "AMDAccelerator", available: true).memoryKindName == "显存")
+        check("gpu amd not shared", !HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "AMDAccelerator", available: true).isSharedMemory)
 
         let gpuMonitor = SystemMonitor()
         let t0 = Date()

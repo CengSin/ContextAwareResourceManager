@@ -87,7 +87,18 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
     }
 
     public var appPath: String? {
-        members.compactMap(\.appPath).first(where: { $0.hasSuffix(".app") }) ?? primary.appPath
+        if let app = members.compactMap(\.appPath).first(where: { $0.hasSuffix(".app") }) {
+            return app
+        }
+        for member in members {
+            if let p = member.appPath, let range = p.range(of: ".app") {
+                let sub = String(p[..<range.upperBound])
+                if FileManager.default.fileExists(atPath: sub) {
+                    return sub
+                }
+            }
+        }
+        return primary.appPath
     }
 
     public var totalMemoryMB: Double {

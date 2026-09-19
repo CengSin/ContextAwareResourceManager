@@ -47,7 +47,7 @@ struct FavoriteAppsView: View {
                         HStack(spacing: 6) {
                             ForEach(coordinator.settings.favoriteApps) { app in
                                 HStack(spacing: 5) {
-                                    AppIconView(path: app.path, size: 14)
+                                    AppIconView(path: app.path, bundleID: app.bundleID, processName: app.name, size: 14)
                                     Text(app.name)
                                         .font(.system(size: 11, weight: .medium))
                                         .lineLimit(1)
@@ -138,7 +138,7 @@ struct FavoriteAppsView: View {
                             let isFav = coordinator.isFavorite(bundleID: app.bundleID)
 
                             HStack(spacing: 8) {
-                                AppIconView(path: app.path, size: 22)
+                                AppIconView(path: app.path, bundleID: app.bundleID, processName: app.name, size: 22)
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     HStack(spacing: 5) {

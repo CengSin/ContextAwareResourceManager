@@ -62,4 +62,16 @@ public struct HostGPU: Sendable, Equatable {
         if !name.isEmpty { return name }
         return "GPU"
     }
+
+    public var isSharedMemory: Bool {
+        let lower = name.lowercased()
+        return lower.contains("intel") || lower.contains("agx") || lower.contains("apple")
+    }
+
+    public var memoryKindName: String {
+        let lower = name.lowercased()
+        if lower.contains("intel") { return "共享显存" }
+        if lower.contains("agx") || lower.contains("apple") { return "统一内存" }
+        return "显存"
+    }
 }

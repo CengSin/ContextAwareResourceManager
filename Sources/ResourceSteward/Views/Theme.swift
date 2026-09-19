@@ -80,6 +80,33 @@ enum AppIconCache {
     nonisolated(unsafe) private static var images: [String: NSImage] = [:]
     private static let queue = DispatchQueue(label: "cc.resourcesteward.icons", qos: .userInitiated)
 
+    static func resolvePath(path: String?, bundleID: String?) -> String? {
+        if let path, !path.isEmpty {
+            if path.hasSuffix(".app") && FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+            if let range = path.range(of: ".app") {
+                let sub = String(path[..<range.upperBound])
+                if FileManager.default.fileExists(atPath: sub) {
+                    return sub
+                }
+            }
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+        if let bundleID, !bundleID.isEmpty {
+            let root = ProcessFamily.rootBundleID(from: bundleID) ?? bundleID
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: root) {
+                return url.path
+            }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                return url.path
+            }
+        }
+        return (path?.isEmpty == false) ? path : nil
+    }
+
     static func cached(_ path: String) -> NSImage? {
         lock.lock()
         defer { lock.unlock() }
@@ -88,18 +115,27 @@ enum AppIconCache {
 
     /// Load off the main thread. `icon(forFile:)` hits disk; doing it on MainActor
     /// stalls the menu.
-    static func load(_ path: String) async -> NSImage {
-        if let cached = cached(path) { return cached }
+    static func load(path: String?, bundleID: String? = nil) async -> NSImage? {
+        guard let resolved = resolvePath(path: path, bundleID: bundleID), !resolved.isEmpty else {
+            return nil
+        }
+        if let cached = cached(resolved) { return cached }
         return await withCheckedContinuation { continuation in
             queue.async {
-                if let cached = cached(path) {
+                if let cached = cached(resolved) {
                     continuation.resume(returning: cached)
                     return
                 }
-                let icon = NSWorkspace.shared.icon(forFile: path)
+                guard FileManager.default.fileExists(atPath: resolved)
+                    || resolved.hasSuffix(".app")
+                    || resolved.contains(".app/") else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let icon = NSWorkspace.shared.icon(forFile: resolved)
                 icon.size = NSSize(width: 64, height: 64)
                 lock.lock()
-                images[path] = icon
+                images[resolved] = icon
                 lock.unlock()
                 continuation.resume(returning: icon)
             }
@@ -109,19 +145,27 @@ enum AppIconCache {
 
 struct AppIconView: View {
     let path: String?
+    var bundleID: String? = nil
+    var processName: String? = nil
     var size: CGFloat = 24
     @State private var image: NSImage?
 
+    private var resolvedPath: String? {
+        AppIconCache.resolvePath(path: path, bundleID: bundleID)
+    }
+
+    private var cacheKey: String {
+        "\(path ?? "")|\(bundleID ?? "")"
+    }
+
     var body: some View {
         Group {
-            if let nsImage = image ?? path.flatMap(AppIconCache.cached) {
+            if let nsImage = image ?? resolvedPath.flatMap(AppIconCache.cached) {
                 Image(nsImage: nsImage)
                     .resizable()
                     .interpolation(.medium)
             } else {
-                Image(systemName: "app.dashed")
-                    .font(.system(size: size * 0.6))
-                    .foregroundStyle(.secondary)
+                fallbackIcon
             }
         }
         .frame(width: size, height: size)
@@ -131,13 +175,39 @@ struct AppIconView: View {
                 .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
         )
         .shadow(color: Color.black.opacity(0.12), radius: 2, x: 0, y: 1)
-        .task(id: path) {
-            guard let path, !path.isEmpty else {
+        .task(id: cacheKey) {
+            guard let resolved = resolvedPath, !resolved.isEmpty else {
                 image = nil
                 return
             }
-            if image != nil || AppIconCache.cached(path) != nil { return }
-            image = await AppIconCache.load(path)
+            if let cached = AppIconCache.cached(resolved) {
+                image = cached
+                return
+            }
+            if let loaded = await AppIconCache.load(path: path, bundleID: bundleID) {
+                image = loaded
+            }
+        }
+    }
+
+    private var fallbackIcon: some View {
+        let name = (processName ?? "").lowercased()
+        let p = (path ?? "").lowercased()
+        let isCLI = name.contains("zsh") || name.contains("bash") || name.contains("python")
+            || name.contains("node") || name.contains("git") || name.contains("ruby")
+            || name.contains("cargo") || name.contains("brew") || name.contains("fish")
+            || name.contains("sh") || p.contains("/bin/") || p.contains("/usr/bin")
+        let isSystem = name.hasSuffix("d") || p.contains("/system/") || p.contains("/usr/libexec/")
+            || name.contains("launchd") || name.contains("windowserver") || name.contains("kernel")
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+
+            Image(systemName: isCLI ? "terminal.fill" : (isSystem ? "gearshape.2.fill" : "app.fill"))
+                .font(.system(size: size * 0.52))
+                .foregroundStyle(.secondary)
         }
     }
 }
+

@@ -247,7 +247,10 @@ int rs_host_gpu(RSHostGPU *out) {
                 if (!rs_copy_u64(perf, CFSTR("gartUsedBytes"), &used)) {
                     rs_copy_u64(perf, CFSTR("In use system memory"), &used);
                 }
-                if (!rs_copy_u64(perf, CFSTR("gartSizeBytes"), &total)) {
+                uint64_t vram_mb = 0;
+                if (rs_copy_u64(props, CFSTR("VRAM,totalMB"), &vram_mb) && vram_mb > 0) {
+                    total = vram_mb * 1024 * 1024;
+                } else if (!rs_copy_u64(perf, CFSTR("gartSizeBytes"), &total)) {
                     rs_copy_u64(perf, CFSTR("Alloc system memory"), &total);
                 }
                 // Prefer the accelerator that actually owns a GART/VRAM window.
