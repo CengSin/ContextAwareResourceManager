@@ -120,11 +120,14 @@ struct SettingsView: View {
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.secondary)
-            content()
+            VStack(alignment: .leading, spacing: 8) {
+                content()
+            }
+            .modernCard(padding: 10)
         }
     }
 

@@ -35,95 +35,200 @@ struct MenuBarPanel: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
+        VStack(spacing: 10) {
+            // Title & Mode Bar
+            HStack(alignment: .center) {
+                HStack(spacing: 6) {
+                    Image(systemName: "memorychip")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.pressureColor(coordinator.pressure))
                     Text("资源管家")
-                        .font(.headline)
-                    HStack(spacing: 6) {
+                        .font(.system(size: 14, weight: .bold))
+                }
+
+                Spacer()
+
+                HStack(spacing: 6) {
+                    if coordinator.settings.authorizationLevel == .sceneSwitch {
+                        Text("半自动")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.16), in: Capsule())
+                    } else {
+                        Text("仅建议")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.primary.opacity(0.08), in: Capsule())
+                    }
+                }
+            }
+
+            // Dashboard Card: Circular Gauge + Resource Bars
+            HStack(spacing: 14) {
+                // Left: Circular RAM Gauge
+                VStack(spacing: 4) {
+                    ZStack {
+                        // Background track
+                        Circle()
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 5)
+                            .frame(width: 58, height: 58)
+
+                        // Active arc
+                        Circle()
+                            .trim(from: 0, to: CGFloat(min(1.0, max(0.03, ramPercent / 100.0))))
+                            .stroke(
+                                Theme.pressureColor(coordinator.pressure),
+                                style: StrokeStyle(lineWidth: 5, lineCap: .round)
+                            )
+                            .rotationEffect(.degrees(-90))
+                            .frame(width: 58, height: 58)
+                            .shadow(color: Theme.pressureColor(coordinator.pressure).opacity(0.25), radius: 3)
+
+                        // Center content
+                        VStack(spacing: 0) {
+                            Text("RAM")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "%.0f%%", ramPercent))
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                        }
+                    }
+
+                    HStack(spacing: 4) {
                         Circle()
                             .fill(Theme.pressureColor(coordinator.pressure))
-                            .frame(width: 8, height: 8)
-                        Text("内存压力 \(coordinator.pressure.title)")
-                            .font(.caption.weight(.medium))
+                            .frame(width: 5, height: 5)
+                        Text(coordinator.pressure.title)
+                            .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(Theme.pressureColor(coordinator.pressure))
                     }
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    HStack(spacing: 6) {
-                        if coordinator.settings.authorizationLevel == .sceneSwitch {
-                            Text("半自动")
-                                .font(.system(size: 9, weight: .bold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.16), in: Capsule())
-                        }
-                        Text(coordinator.settings.authorizationLevel == .sceneSwitch ? "半自动" : "仅建议")
-                            .font(.subheadline.weight(.semibold))
+                .padding(.vertical, 2)
+
+                // Right: CPU & GPU Stat Bars
+                VStack(alignment: .leading, spacing: 8) {
+                    MinimalStatBar(
+                        title: "CPU",
+                        percent: coordinator.hostCPU.usagePercent,
+                        detail: String(format: "用户 %.0f%% · 系统 %.0f%%", coordinator.hostCPU.userPercent, coordinator.hostCPU.systemPercent),
+                        color: Theme.usageColor(coordinator.hostCPU.usagePercent)
+                    )
+
+                    MinimalStatBar(
+                        title: "GPU",
+                        percent: coordinator.hostGPU.usagePercent,
+                        detail: gpuDetail,
+                        color: Theme.usageColor(coordinator.hostGPU.usagePercent),
+                        available: coordinator.hostGPU.available
+                    )
+
+                    HStack(spacing: 10) {
+                        Text("已用 \(ByteFormat.string(coordinator.hostMemory.usedBytes)) / \(ByteFormat.string(coordinator.hostMemory.physicalBytes))")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        Spacer()
+                        Text("压缩 \(ByteFormat.string(coordinator.hostMemory.compressedBytes))")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
                     }
-                    Text(coordinator.autoStatusText.isEmpty ? matchCaption : coordinator.autoStatusText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                 }
             }
+            .modernCard(padding: 10)
 
-            HStack(spacing: 8) {
-                UsageStat(
-                    title: "CPU",
-                    percent: coordinator.hostCPU.usagePercent,
-                    detail: String(format: "用户 %.0f%%  系统 %.0f%%", coordinator.hostCPU.userPercent, coordinator.hostCPU.systemPercent)
-                )
-                UsageStat(
-                    title: "GPU",
-                    percent: coordinator.hostGPU.usagePercent,
-                    detail: gpuDetail,
-                    available: coordinator.hostGPU.available
-                )
+            // Context Awareness Pill
+            HStack(spacing: 6) {
+                Image(systemName: coordinator.estimatedReleaseMB > 0 ? "sparkles" : "waveform.path.ecg")
+                    .font(.system(size: 10))
+                    .foregroundStyle(coordinator.estimatedReleaseMB > 0 ? Color.accentColor : .secondary)
+
+                if coordinator.estimatedReleaseMB > 0 {
+                    Text("场景感知 · 发现闲置后台应用，预计可释放 \(ByteFormat.mb(coordinator.estimatedReleaseMB))")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.primary)
+                } else {
+                    Text(coordinator.autoStatusText.isEmpty ? matchCaption : coordinator.autoStatusText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
             }
-
-            HStack(spacing: 8) {
-                MemoryStat(title: "RAM", value: ramValue)
-                MemoryStat(title: "Compressed", value: ByteFormat.string(coordinator.hostMemory.compressedBytes))
-                MemoryStat(title: "Swap", value: ByteFormat.string(coordinator.hostMemory.swapUsedBytes))
-            }
-
-            Text("退出后内存由系统自然回收。下列「预计」只统计建议退出的占用，不是本工具直接压缩的结果。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(coordinator.estimatedReleaseMB > 0 ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(coordinator.estimatedReleaseMB > 0 ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.05), lineWidth: 0.5)
+            )
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 
     private var footer: some View {
-        HStack {
-            Picker("", selection: tabSelection) {
+        HStack(spacing: 8) {
+            // Capsule Tab Switcher
+            HStack(spacing: 2) {
                 ForEach(PanelTab.allCases) { tab in
-                    Text(tab.title).tag(tab)
+                    let isSelected = selectedTab == tab
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            tabSelection.wrappedValue = tab
+                        }
+                    } label: {
+                        Text(tab.title)
+                            .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(isSelected ? Color.primary.opacity(0.12) : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            .padding(2)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            Spacer()
 
             Button {
                 coordinator.refresh()
             } label: {
                 Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(6)
+                    .background(Color.primary.opacity(0.04), in: Circle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("立即刷新")
 
             Button {
                 NSApp.terminate(nil)
             } label: {
                 Image(systemName: "power")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(6)
+                    .background(Color.primary.opacity(0.04), in: Circle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("退出管家（会自动解冻）")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
     }
 
@@ -133,8 +238,6 @@ struct MenuBarPanel: View {
             set: { tab in
                 selectedTab = tab
                 guard !visitedTabs.contains(tab) else { return }
-                // Mount the destination tab on the next turn so the segmented
-                // control can paint before the new page is built.
                 Task { @MainActor in
                     visitedTabs.insert(tab)
                 }
@@ -151,6 +254,11 @@ struct MenuBarPanel: View {
                 .accessibilityHidden(selectedTab != tab)
                 .zIndex(selectedTab == tab ? 1 : 0)
         }
+    }
+
+    private var ramPercent: Double {
+        guard coordinator.hostMemory.physicalBytes > 0 else { return 0 }
+        return Double(coordinator.hostMemory.usedBytes) / Double(coordinator.hostMemory.physicalBytes) * 100.0
     }
 
     private var ramValue: String {
@@ -181,66 +289,45 @@ struct MenuBarPanel: View {
     }
 }
 
-private struct UsageStat: View {
+private struct MinimalStatBar: View {
     let title: String
     let percent: Double
     var detail: String = ""
+    var color: Color
     var available: Bool = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
-                Text(title.uppercased())
-                    .font(.system(size: 9, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text(available ? String(format: "%.0f%%", percent) : "—")
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(available ? Theme.usageColor(percent) : .secondary)
+                    .foregroundStyle(available ? color : .secondary)
             }
+
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.primary.opacity(0.08))
+                        .fill(Color.primary.opacity(0.06))
                     if available {
                         Capsule()
-                            .fill(Theme.usageColor(percent))
-                            .frame(width: max(4, geo.size.width * CGFloat(min(1, percent / 100))))
+                            .fill(color)
+                            .frame(width: max(3, geo.size.width * CGFloat(min(1.0, max(0.0, percent / 100.0)))))
                     }
                 }
             }
-            .frame(height: 6)
+            .frame(height: 4)
+
             if !detail.isEmpty {
                 Text(detail)
-                    .font(.system(size: 9))
+                    .font(.system(size: 8))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-private struct MemoryStat: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .monospacedDigit()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

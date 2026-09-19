@@ -7,67 +7,92 @@ struct ProcessListView: View {
     @State private var query = ""
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 8) {
+            // Status/Alert Banner if present
             if let message = coordinator.lastMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(coordinator.lastMessageIsError ? .red : .secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(coordinator.lastMessageIsError ? Color.red.opacity(0.08) : Color.primary.opacity(0.04))
-            }
-
-            if coordinator.estimatedReleaseMB > 0 {
-                HStack {
-                    Text("预计可释放 \(ByteFormat.mb(coordinator.estimatedReleaseMB))")
-                        .font(.caption.weight(.medium))
-                    Spacer()
-                    Text("估算 · 非直接回收")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: coordinator.lastMessageIsError ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                        .font(.system(size: 11))
+                    Text(message)
+                        .font(.system(size: 11))
+                        .lineLimit(2)
                 }
-                .padding(.horizontal, 14)
+                .foregroundStyle(coordinator.lastMessageIsError ? Color.red : Color.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(coordinator.lastMessageIsError ? Color.red.opacity(0.1) : Color.primary.opacity(0.04))
+                )
+                .padding(.horizontal, 14)
+                .padding(.top, 4)
             }
 
+            // Old frozen processes warning (if any)
             if !coordinator.frozen.isEmpty {
                 frozenSection
             }
 
-            HStack {
-                Text("按占用与建议排序")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Toggle("只看建议", isOn: actionableBinding)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .font(.caption)
+            // Search Bar & Filter Header
+            HStack(spacing: 8) {
+                // Raycast style search box
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    TextField("搜索应用或进程...", text: $query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11))
+
+                    if !query.isEmpty {
+                        Button {
+                            query = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
+                )
+
+                // Actionable Filter Toggle
+                Toggle(isOn: actionableBinding) {
+                    Text("只看建议")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
             }
             .padding(.horizontal, 14)
-            .padding(.top, 6)
 
-            TextField("筛选名称，例如 Chrome", text: $query)
-                .textFieldStyle(.roundedBorder)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 6)
-
+            // Content List or Empty State
             if displayedGroups.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
+                VStack(spacing: 10) {
+                    Spacer()
+                    Image(systemName: query.isEmpty ? "sparkles" : "magnifyingglass")
+                        .font(.system(size: 26))
+                        .foregroundStyle(.tertiary)
                     Text(emptyListText)
-                        .font(.caption)
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 32)
+                    Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(spacing: 6) {
                         ForEach(displayedGroups) { group in
                             ProcessGroupRow(
                                 group: group,
@@ -75,15 +100,16 @@ struct ProcessListView: View {
                                 isFavorite: coordinator.isFavorite(group)
                             )
                             .equatable()
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                expandedID = expandedID == group.id ? nil : group.id
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    expandedID = expandedID == group.id ? nil : group.id
+                                }
                             }
-                            Divider().padding(.leading, 42)
                         }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
                 }
             }
         }
@@ -106,12 +132,12 @@ struct ProcessListView: View {
     private var emptyListText: String {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !needle.isEmpty {
-            return "没有匹配「\(needle)」的进程"
+            return "没有找到匹配「\(needle)」的进程"
         }
         if coordinator.settings.showOnlyActionable {
-            return "没有建议降级或退出的灰区应用。前台、常用和系统进程不会出现在这里。关掉「只看建议」可看全部。"
+            return "当前没有建议降级或退出的应用。\n前台、常用与系统进程已受保护。关掉「只看建议」可查看全部运行应用。"
         }
-        return "正在采集进程…"
+        return "正在采集进程状态…"
     }
 
     private var actionableBinding: Binding<Bool> {
@@ -161,6 +187,7 @@ private struct ProcessGroupRow: View, Equatable {
     let group: ProcessGroupViewModel
     let expanded: Bool
     let isFavorite: Bool
+    @State private var isHovered = false
 
     nonisolated static func == (lhs: ProcessGroupRow, rhs: ProcessGroupRow) -> Bool {
         lhs.expanded == rhs.expanded
@@ -169,131 +196,213 @@ private struct ProcessGroupRow: View, Equatable {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 8) {
-                AppIconView(path: group.appPath)
+        VStack(alignment: .leading, spacing: 6) {
+            // Main App Row
+            HStack(alignment: .center, spacing: 10) {
+                AppIconView(path: group.appPath, size: 28)
+
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(group.displayName)
-                            .font(.subheadline.weight(.medium))
+                            .font(.system(size: 12, weight: .semibold))
                             .lineLimit(1)
+
                         if group.isForeground {
                             Text("前台")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Theme.foregroundColor)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(Color.green.opacity(0.18), in: Capsule())
+                                .background(Theme.foregroundColor.opacity(0.14), in: Capsule())
                         }
                         if group.isKeepAlive {
                             Text("常驻")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Theme.favoriteColor)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(Color.purple.opacity(0.16), in: Capsule())
+                                .background(Theme.favoriteColor.opacity(0.14), in: Capsule())
                         } else if isFavorite {
                             Text("常用")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Theme.favoriteColor)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(Color.purple.opacity(0.16), in: Capsule())
+                                .background(Theme.favoriteColor.opacity(0.14), in: Capsule())
                         }
                         if group.members.count > 1 {
-                            Text(group.companionCount > 0
-                                 ? "\(group.members.count) 个进程 · 含 Helper"
-                                 : "\(group.members.count) 个进程")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                            Text(group.companionCount > 0 ? "\(group.members.count) 进程 · Helper" : "\(group.members.count) 进程")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.primary.opacity(0.04), in: Capsule())
                         }
                     }
-                    Text("\(ByteFormat.mb(group.totalMemoryMB))  ·  CPU \(Int(group.cpuPercent))%  ·  \(DurationFormat.idle(group.idleSeconds))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+
+                    // Resource details: Memory + CPU + Idle time
+                    HStack(spacing: 6) {
+                        Text(ByteFormat.mb(group.totalMemoryMB))
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(Color.primary.opacity(0.85))
+                            .monospacedDigit()
+
+                        Text("·")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.tertiary)
+
+                        Text("CPU \(Int(group.cpuPercent))%")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+
+                        Text("·")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.tertiary)
+
+                        Text(DurationFormat.idle(group.idleSeconds))
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                // Action Pill or Trigger Button
+                HStack(spacing: 6) {
+                    if group.appliedAction == .freeze {
+                        Button("恢复") {
+                            for member in group.members {
+                                coordinator.thaw(pid: member.snapshot.pid)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    } else if group.appliedAction == .throttle {
+                        Button("恢复优先级") {
+                            coordinator.restorePriority(for: group)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    } else if group.effectiveSuggestion != .none && !group.isForeground && !group.isProtected {
+                        Button(actionButtonTitle) {
+                            coordinator.request(group.effectiveSuggestion, for: group)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.actionColor(group.effectiveSuggestion))
+                        .controlSize(.mini)
+                        .font(.system(size: 10, weight: .semibold))
+                    } else {
+                        Text(statusTitle)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.actionColor(statusAction))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Theme.actionColor(statusAction).opacity(0.12), in: Capsule())
+                    }
+
+                    // Score indicator pill
+                    Text(String(format: "%.0f", group.score.score))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                }
-                Spacer(minLength: 8)
-                Text(String(format: "%.0f", group.score.score))
-                    .font(.system(.body, design: .rounded).weight(.bold))
-                    .foregroundStyle(Theme.scoreColor(group.score.score))
-                    .frame(width: 32, alignment: .trailing)
-            }
-
-            HStack {
-                Text(statusTitle)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Theme.actionColor(statusAction))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Theme.actionColor(statusAction).opacity(0.14), in: Capsule())
-                Spacer()
-                if group.appliedAction == .freeze {
-                    Button("恢复") {
-                        for member in group.members {
-                            coordinator.thaw(pid: member.snapshot.pid)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                } else if group.appliedAction == .throttle {
-                    Button("恢复优先级") {
-                        coordinator.restorePriority(for: group)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                } else if group.effectiveSuggestion != .none {
-                    Button("应用建议") {
-                        coordinator.request(group.effectiveSuggestion, for: group)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .disabled(group.isForeground || group.isProtected)
+                        .foregroundStyle(Theme.scoreColor(group.score.score))
+                        .frame(width: 24, alignment: .trailing)
                 }
             }
 
+            // Expanded detail section
             if expanded {
-                ScoreBreakdownView(components: group.score.components, estimatedMB: group.members.map(\.snapshot.memoryFootprintMB).max() ?? 0)
-                if group.members.count > 1 {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(group.members) { member in
-                            HStack(spacing: 6) {
-                                Text("PID \(member.snapshot.pid)  \(member.snapshot.processName)  \(ByteFormat.mb(member.snapshot.memoryFootprintMB))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                if let role = ProcessFamily.roleLabel(
-                                    bundleID: member.snapshot.bundleID,
-                                    processName: member.snapshot.processName
-                                ) {
-                                    Text(role)
-                                        .font(.system(size: 9, weight: .semibold))
+                VStack(alignment: .leading, spacing: 8) {
+                    Divider().padding(.vertical, 2)
+
+                    ScoreBreakdownView(
+                        components: group.score.components,
+                        estimatedMB: group.members.map(\.snapshot.memoryFootprintMB).max() ?? 0
+                    )
+
+                    if group.members.count > 1 {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("进程拓扑树")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+
+                            ForEach(group.members) { member in
+                                HStack(spacing: 6) {
+                                    Text("↳")
+                                        .font(.system(size: 10))
                                         .foregroundStyle(.tertiary)
+                                    Text(member.snapshot.processName)
+                                        .font(.system(size: 10, weight: .medium))
+                                    Text("PID \(member.snapshot.pid)")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.tertiary)
+                                    Spacer()
+                                    Text(ByteFormat.mb(member.snapshot.memoryFootprintMB))
+                                        .font(.system(size: 9, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+
+                                    if let role = ProcessFamily.roleLabel(
+                                        bundleID: member.snapshot.bundleID,
+                                        processName: member.snapshot.processName
+                                    ) {
+                                        Text(role)
+                                            .font(.system(size: 8, weight: .medium))
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(Color.primary.opacity(0.04), in: Capsule())
+                                    }
                                 }
+                                .padding(.leading, 6)
                             }
                         }
                     }
-                }
-                HStack {
-                    ForEach(alternateActions, id: \.rawValue) { action in
-                        Button(action.title) {
-                            coordinator.request(action, for: group)
+
+                    // Alternate actions row
+                    HStack(spacing: 6) {
+                        ForEach(alternateActions, id: \.rawValue) { action in
+                            Button(action.title) {
+                                coordinator.request(action, for: group)
+                            }
+                            .controlSize(.mini)
+                            .disabled(group.isForeground || group.isProtected)
+                        }
+
+                        Spacer()
+
+                        if canMarkFavorite {
+                            Button(isFavorite ? "取消常用" : "设为常用") {
+                                coordinator.toggleFavorite(group)
+                            }
+                            .controlSize(.mini)
+                        }
+
+                        Button("不再建议") {
+                            coordinator.ignoreAndBlacklist(group)
                         }
                         .controlSize(.mini)
-                        .disabled(group.isForeground || group.isProtected)
+                        .foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    if canMarkFavorite {
-                        Button(isFavorite ? "取消常用" : "设为常用") {
-                            coordinator.toggleFavorite(group)
-                        }
-                        .controlSize(.mini)
-                    }
-                    Button("不再建议") {
-                        coordinator.ignoreAndBlacklist(group)
-                    }
-                    .controlSize(.mini)
-                    .foregroundStyle(.secondary)
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.vertical, 2)
+        .modernCard(isHovered: isHovered, padding: 8)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var actionButtonTitle: String {
+        switch group.effectiveSuggestion {
+        case .throttle: return "降优先级"
+        case .quit: return "退出"
+        case .freeze: return "冻结"
+        case .none: return "应用"
+        }
     }
 
     private var canMarkFavorite: Bool {
@@ -315,7 +424,7 @@ private struct ProcessGroupRow: View, Equatable {
     private var statusTitle: String {
         switch group.appliedAction {
         case .freeze: return "已冻结"
-        case .throttle: return "已降低优先级"
+        case .throttle: return "已降级"
         default: return group.effectiveSuggestion.title
         }
     }
@@ -330,27 +439,27 @@ private struct ScoreBreakdownView: View {
             ForEach(Array(components.items.enumerated()), id: \.offset) { _, item in
                 HStack(spacing: 8) {
                     Text(item.label)
-                        .font(.caption2)
-                        .frame(width: 52, alignment: .leading)
+                        .font(.system(size: 10))
+                        .frame(width: 54, alignment: .leading)
                     GeometryReader { geo in
                         let width = geo.size.width * min(1, abs(item.value) / 100)
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(item.isPenalty ? Color.red.opacity(0.45) : Color.accentColor.opacity(0.55))
-                            .frame(width: max(width, item.value == 0 ? 0 : 2), height: 6)
+                            .fill(item.isPenalty ? Color.red.opacity(0.5) : Color.accentColor.opacity(0.55))
+                            .frame(width: max(width, item.value == 0 ? 0 : 2), height: 4)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(height: 6)
+                    .frame(height: 4)
                     Text(String(format: "%+.1f", item.value))
-                        .font(.caption2.monospacedDigit())
-                        .frame(width: 44, alignment: .trailing)
+                        .font(.system(size: 10, design: .rounded).monospacedDigit())
+                        .frame(width: 40, alignment: .trailing)
                         .foregroundStyle(item.isPenalty ? .red : .secondary)
                 }
             }
-            Text("预计占用 \(ByteFormat.mb(estimatedMB))，处理后由系统决定是否回收")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text("预计释放 \(ByteFormat.mb(estimatedMB)) · 退出后由系统自然回收")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
         }
         .padding(8)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
