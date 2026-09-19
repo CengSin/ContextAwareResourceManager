@@ -212,8 +212,8 @@ score >= 85           → .quit       （仅当 App 无未保存内容提示时�
 1. 采样系统负载（内存压力、CPU、内存占用）和正在运行的应用族
 2. 本地划灰区：排除前台、保护进程、VPN/VM、会议/录屏、IM、输入法/辅助、常用、accessory、非用户 App
 3. 把负载 + 灰区名单（最多 12 个，按内存）一次交给 Jev；每个 App 选择 `keep` / `throttle` / `quit`。不确定或失败 → 保留
-4. **Level 0**：Jev 给出降级/退出后弹窗，用户确认才执行
-5. **Level 1**：同一套决策自动执行（自动退出要求空闲至少约 30 秒）
+4. **Level 0**：Jev 给出降级/退出后弹出独立确认窗口（不依赖菜单栏面板打开），用户确认才执行
+5. **Level 1**：同一套决策自动执行（自动退出要求空闲至少约 30 秒），完成后发系统通知
 6. **Level 2**：不可用，写入配置会回退到 Level 0
 
 工作场景匹配、切场景冻结、分类表自动回收不再驱动动作。
@@ -261,6 +261,8 @@ Jev 是决策模型，不是 agent：只返回 typed Choice，不发信号。代
 | 降优先级 | `setpriority()` | 无（同用户） | 标准 POSIX |
 | 解冻旧残留 | `kill(pid, SIGCONT)` | 无（同用户） | 不再新发 SIGSTOP |
 | 退出 App | `NSRunningApplication.terminate()` | 无 | 公开 API |
+| Level 0 确认窗口 | `NSPanel` | 无 | 浮动独立窗口，不依赖菜单栏面板打开 |
+| Level 1 系统通知 | `UNUserNotificationCenter` | 用户授权通知 | 横幅 + 通知中心；拒绝授权不影响自动执行 |
 
 **分发方式**：不走 Mac App Store 沙盒（沙盒会限制向其他进程发信号），采用 Developer ID 签名 + Apple 公证（notarization）的 DMG 直接分发，与 App Tamer、CleanMyMac 路径一致。
 
@@ -272,7 +274,7 @@ Jev 是决策模型，不是 agent：只返回 typed Choice，不发信号。代
 - 点击展开面板：
   - 顶部：Pressure / RAM / Compressed / Swap、CPU/GPU
   - 列表：运行中应用族；建议来自 Jev（保留 / 降级 / 退出）
-  - Level 0：Jev 给出降级/退出后弹窗确认；Level 1 自动执行
+  - Level 0：Jev 给出降级/退出后弹出独立确认窗口；Level 1 自动执行并发系统通知
 - 常用页：跨场景保活，不进灰区
 - 设置页：授权级别、Jev Key/URL、采样间隔。Level 2 可见但不可选
 
@@ -283,7 +285,7 @@ Jev 是决策模型，不是 agent：只返回 typed Choice，不发信号。代
 ### 8.1 当前
 - 负载 + 灰区运行中 App 一次交给 Jev
 - 动作：保留 / 降优先级 / 退出（无冻结）
-- Level 0 弹窗确认；Level 1 自动执行
+- Level 0 独立窗口确认；Level 1 自动执行并发系统通知
 
 ### 8.2 已移除
 - 工作场景匹配、切场景自动冻结、Markov 预测、安装应用分类泵

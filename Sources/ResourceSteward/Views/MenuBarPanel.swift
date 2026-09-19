@@ -7,24 +7,11 @@ struct MenuBarPanel: View {
     @State private var visitedTabs: Set<PanelTab> = [.processes]
 
     var body: some View {
-        ZStack {
-            Group {
-                if coordinator.settings.hasCompletedOnboarding {
-                    mainPanel
-                } else {
-                    OnboardingView()
-                }
-            }
-            if let batch = coordinator.pendingBatch {
-                Color.black.opacity(0.32)
-                    .ignoresSafeArea()
-                ConfirmBatchCard(batch: batch)
-                    .padding(18)
-            } else if let pending = coordinator.pendingAction {
-                Color.black.opacity(0.32)
-                    .ignoresSafeArea()
-                ConfirmActionCard(pending: pending)
-                    .padding(18)
+        Group {
+            if coordinator.settings.hasCompletedOnboarding {
+                mainPanel
+            } else {
+                OnboardingView()
             }
         }
         .background(.ultraThinMaterial)
@@ -191,82 +178,6 @@ struct MenuBarPanel: View {
             return "按系统负载与正在运行的灰区 App 询问 Jev"
         }
         return "启用 Jev 后才会按负载给出建议"
-    }
-}
-
-private struct ConfirmBatchCard: View {
-    @EnvironmentObject private var coordinator: AppCoordinator
-    let batch: PendingDecisionBatch
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Jev 建议按当前负载处理这些应用")
-                .font(.headline)
-            Text("降低优先级不会回收内存；退出才会让系统回收占用。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(batch.items) { item in
-                    HStack {
-                        Text(item.group.displayName)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                        Spacer()
-                        Text(item.action.title)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Theme.actionColor(item.action))
-                    }
-                }
-            }
-            HStack {
-                Button("暂不处理", action: coordinator.cancelPendingBatch)
-                Spacer()
-                Button("确认执行", action: coordinator.confirmPendingBatch)
-                    .buttonStyle(.borderedProminent)
-                    .tint(batch.items.contains(where: { $0.action == .quit }) ? .red : .accentColor)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: 360)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
-    }
-}
-
-private struct ConfirmActionCard: View {
-    @EnvironmentObject private var coordinator: AppCoordinator
-    let pending: PendingAction
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(pending.action.confirmationTitle)
-                .font(.headline)
-            Text("\(pending.group.displayName) · \(pending.group.members.count) 个进程")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            if pending.group.companionCount > 0 {
-                Text("Helper / Renderer 会随主应用一起处理，不会单独降级。单独处理它们会让开链接等功能失效。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text(pending.action.confirmationDetail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("取消", action: coordinator.cancelPending)
-                Spacer()
-                Button("确认执行", action: coordinator.confirmPending)
-                    .buttonStyle(.borderedProminent)
-                    .tint(pending.action == .quit ? .red : .accentColor)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: 360)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
     }
 }
 

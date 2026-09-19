@@ -33,7 +33,7 @@ struct OnboardingView: View {
                 OnboardPoint(
                     icon: "pause.rectangle",
                     title: "默认只建议，半自动可在设置里打开",
-                    detail: "Level 0：Jev 给出保留/降级/退出后弹窗让你确认。Level 1：同一套决策自动执行。系统进程、VPN/容器和「常用」里的应用不会动。"
+                    detail: "Level 0：Jev 给出保留/降级/退出后弹出独立窗口让你确认。Level 1：同一套决策自动执行，完成后发系统通知。系统进程、VPN/容器和「常用」里的应用不会动。"
                 )
                 OnboardPoint(
                     icon: "questionmark.circle",

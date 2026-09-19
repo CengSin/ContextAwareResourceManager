@@ -909,6 +909,30 @@ enum StewardChecks {
         check("level2 settings coerce to level0", decodedAuto.authorizationLevel == .suggestOnly)
         check("level1 available", AuthorizationLevel.sceneSwitch.isAvailable)
         check("level2 unavailable", !AuthorizationLevel.fullyAutomatic.isAvailable)
+        check("level0 footnote mentions window", AuthorizationLevel.suggestOnly.footnote.contains("独立小窗"))
+        check("level1 footnote mentions notification", AuthorizationLevel.sceneSwitch.footnote.contains("系统通知"))
+
+        check("level1 notice title", ReclaimNoticeCopy.level1Title == "资源管家已自动处理")
+        check(
+            "level1 notice throttle only",
+            ReclaimNoticeCopy.level1Body(throttleCount: 2, quitCount: 0, names: ["Chrome", "Slack"])
+                == "已按当前负载降低 2 个优先级。 Chrome、Slack"
+        )
+        check(
+            "level1 notice quit and throttle",
+            ReclaimNoticeCopy.level1Body(throttleCount: 1, quitCount: 1, names: ["Notes"])
+                == "已按当前负载降低 1 个优先级，请求退出 1 个应用。 Notes"
+        )
+        check(
+            "level1 notice truncates names",
+            ReclaimNoticeCopy.level1Body(
+                throttleCount: 0,
+                quitCount: 5,
+                names: ["A", "B", "C", "D", "E"]
+            ) == "已按当前负载请求退出 5 个应用。 A、B、C、D 等"
+        )
+        let notice = AutoReclaimNotice(throttleCount: 1, quitCount: 0, names: ["Chrome"])
+        check("auto notice body matches copy", notice.body.contains("降低 1 个优先级") && notice.title == ReclaimNoticeCopy.level1Title)
 
         failures.append(contentsOf: try JevChecks.run())
 

@@ -5,6 +5,14 @@ import SwiftUI
 @MainActor
 final class StewardAppDelegate: NSObject, NSApplicationDelegate {
     weak var coordinator: AppCoordinator?
+    private var chrome: StewardChrome?
+
+    func bindIfNeeded(_ coordinator: AppCoordinator) {
+        guard chrome == nil else { return }
+        self.coordinator = coordinator
+        chrome = StewardChrome(coordinator: coordinator)
+        coordinator.start()
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.stop()
@@ -31,13 +39,12 @@ struct ResourceStewardApp: App {
         MenuBarExtra {
             MenuBarPanel()
                 .environmentObject(coordinator)
-                .onAppear {
-                    appDelegate.coordinator = coordinator
-                    coordinator.start()
-                }
         } label: {
             StatusBarLabel()
                 .environmentObject(coordinator)
+                .onAppear {
+                    appDelegate.bindIfNeeded(coordinator)
+                }
         }
         .menuBarExtraStyle(.window)
     }

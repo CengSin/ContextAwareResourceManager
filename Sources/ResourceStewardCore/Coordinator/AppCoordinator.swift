@@ -20,6 +20,7 @@ public final class AppCoordinator: ObservableObject {
     @Published public private(set) var isRunning = false
     @Published public var pendingAction: PendingAction?
     @Published public var pendingBatch: PendingDecisionBatch?
+    @Published public private(set) var lastAutoNotice: AutoReclaimNotice?
     @Published public private(set) var autoStatusText: String = ""
 
     public let store: LocalStore
@@ -721,7 +722,12 @@ public final class AppCoordinator: ObservableObject {
         guard !items.isEmpty else { return }
         let signature = items.map { "\($0.group.key):\($0.action.rawValue)" }.sorted().joined(separator: "|")
         if settings.authorizationLevel == .sceneSwitch {
-            executeAutoItems(items, signature: signature, now: now)
+            if pendingBatch != nil {
+                pendingBatch = nil
+            }
+            if pendingAction == nil {
+                executeAutoItems(items, signature: signature, now: now)
+            }
         } else if pendingBatch == nil, pendingAction == nil, signature != dismissedBatchSignature {
             pendingBatch = PendingDecisionBatch(id: signature, items: items)
         }
@@ -758,6 +764,7 @@ public final class AppCoordinator: ObservableObject {
         if signature == lastAutoAppliedSignature { return }
         var throttleCount = 0
         var quitCount = 0
+        var names: [String] = []
         for item in items {
             let result = executor.execute(
                 action: item.action,
@@ -766,6 +773,7 @@ public final class AppCoordinator: ObservableObject {
             )
             lastDwellActionAt[item.group.key] = now
             if result.ok {
+                names.append(item.group.displayName)
                 switch item.action {
                 case .throttle: throttleCount += 1
                 case .quit: quitCount += 1
@@ -785,7 +793,9 @@ public final class AppCoordinator: ObservableObject {
         if throttleCount > 0 { parts.append("降低 \(throttleCount) 个优先级") }
         if quitCount > 0 { parts.append("请求退出 \(quitCount) 个应用") }
         if !parts.isEmpty {
-            lastMessage = "已按当前负载自动" + parts.joined(separator: "，") + "。"
+            let notice = AutoReclaimNotice(throttleCount: throttleCount, quitCount: quitCount, names: names)
+            lastAutoNotice = notice
+            lastMessage = notice.body
             lastMessageIsError = false
         }
     }
@@ -805,7 +815,7 @@ public final class AppCoordinator: ObservableObject {
             return "半自动 · 按负载保留当前灰区应用"
         }
         if pendingBatch != nil {
-            return "仅建议 · 请确认是否应用 Jev 的处理"
+            return "仅建议 · 请在确认窗口中决定是否执行"
         }
         if actable > 0 {
             return "仅建议 · \(actable) 个灰区应用可处理"

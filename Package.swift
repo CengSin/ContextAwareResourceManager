@@ -35,7 +35,8 @@ let package = Package(
             dependencies: ["ResourceStewardCore"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
-                .linkedFramework("SwiftUI")
+                .linkedFramework("SwiftUI"),
+                .linkedFramework("UserNotifications")
             ]
         ),
         .executableTarget(

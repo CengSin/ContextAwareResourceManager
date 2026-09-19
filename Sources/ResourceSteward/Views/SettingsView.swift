@@ -38,7 +38,7 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         .disabled(!level.isAvailable)
                     }
-                    Text("Level 0 会在 Jev 给出降级/退出后弹窗确认。Level 1 用同一套决策自动执行。前台、VPN/会议/IM、常用和系统进程不会进灰区。没有冻结。")
+                    Text("Level 0 会弹出独立确认窗口，确认后才执行。Level 1 自动执行，完成后发系统通知（需授权通知权限）。前台、VPN/会议/IM、常用和系统进程不会进灰区。没有冻结。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     sliderRow("采样间隔（秒）", value: intervalBinding, range: 2...10, format: "%.0f")
