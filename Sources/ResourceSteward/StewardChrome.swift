@@ -20,10 +20,14 @@ final class StewardChrome {
             notifier.requestAuthorization()
         }
 
+        // @Published emits from willSet. The wrapped properties still hold the old
+        // values in that call, so the panel must key off the published pair. Hop to
+        // the next main-queue turn so SwiftUI has the new pending state before layout.
         coordinator.$pendingBatch
             .combineLatest(coordinator.$pendingAction)
-            .sink { [weak self] _, _ in
-                self?.panel.sync()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] batch, action in
+                self?.panel.sync(hasPending: batch != nil || action != nil)
             }
             .store(in: &cancellables)
 
@@ -57,8 +61,8 @@ final class ConfirmPanelController: NSObject, NSWindowDelegate {
         super.init()
     }
 
-    func sync() {
-        if coordinator.pendingBatch != nil || coordinator.pendingAction != nil {
+    func sync(hasPending: Bool) {
+        if hasPending {
             show()
         } else {
             hide()
@@ -76,7 +80,13 @@ final class ConfirmPanelController: NSObject, NSWindowDelegate {
 
     private func show() {
         let panel = makePanelIfNeeded()
+        let wasVisible = panel.isVisible
         present(panel)
+        if !wasVisible {
+            JevLog.info(
+                "confirm_panel_show batch=\(coordinator.pendingBatch != nil) action=\(coordinator.pendingAction != nil)"
+            )
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             guard self.coordinator.pendingBatch != nil || self.coordinator.pendingAction != nil else { return }
@@ -92,18 +102,24 @@ final class ConfirmPanelController: NSObject, NSWindowDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
     }
 
     private func hide() {
-        panel?.orderOut(nil)
+        guard let panel, panel.isVisible else {
+            hasPositioned = false
+            return
+        }
+        panel.orderOut(nil)
         hasPositioned = false
+        JevLog.info("confirm_panel_hide")
     }
 
     private func makePanelIfNeeded() -> NSPanel {
         if let panel { return panel }
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
-            styleMask: [.titled, .closable],
+            styleMask: [.titled, .closable, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -112,6 +128,8 @@ final class ConfirmPanelController: NSObject, NSWindowDelegate {
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
+        // canJoinAllSpaces and moveToActiveSpace are mutually exclusive; mixing them
+        // trips NSWindow._validateCollectionBehavior and kills the process.
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.delegate = self
         let hosting = NSHostingView(rootView: ConfirmPromptView(coordinator: coordinator))

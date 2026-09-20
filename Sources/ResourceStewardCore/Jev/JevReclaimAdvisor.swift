@@ -34,6 +34,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     private var batchInFlight = false
     private var lastBatch = JevBatchSnapshot.empty
     private var lastBatchAt = Date.distantPast
+    private var onBatchResolved: (@Sendable () -> Void)?
     public static let batchMinInterval: TimeInterval = 20
     public static let batchTTL: TimeInterval = 180
     private var apiKeyProvider: () -> String?
@@ -363,6 +364,10 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         withState { lastBatch }
     }
 
+    public func setOnBatchResolved(_ handler: (@Sendable () -> Void)?) {
+        withState { onBatchResolved = handler }
+    }
+
     /// Load + gray-zone running apps in one Jev request. Fail-closed while pending.
     public func syncBatch(
         load: JevLoadState,
@@ -484,6 +489,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                 JevLog.info(
                     "request_ok request_id=\(payload.requestID) batch status=\(payload.httpStatus) latency_ms=\(payload.latencyMs) actions=\(summary)"
                 )
+                let handler = self.withState { self.onBatchResolved }
+                handler?()
             } catch {
                 self.withState {
                     self.batchInFlight = false
@@ -493,6 +500,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                 JevLog.error(
                     "request_fail request_id=\(requestID) batch message=\(error.localizedDescription)"
                 )
+                let handler = self.withState { self.onBatchResolved }
+                handler?()
             }
         }
     }

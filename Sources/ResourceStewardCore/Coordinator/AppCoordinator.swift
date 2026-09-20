@@ -67,6 +67,11 @@ public final class AppCoordinator: ObservableObject {
         collector.start()
         thawLeftoverFreezes()
         persistSettings()
+        jevAdvisor.setOnBatchResolved { [weak self] in
+            Task { @MainActor in
+                self?.applyResolvedBatch()
+            }
+        }
         refresh()
         let interval = max(2, settings.sampleIntervalSeconds)
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
@@ -83,6 +88,7 @@ public final class AppCoordinator: ObservableObject {
         try? store.replaceFrozen([])
         timer?.invalidate()
         timer = nil
+        jevAdvisor.setOnBatchResolved(nil)
         collector.stop()
         pressureMonitor.stop()
         isRunning = false
@@ -280,7 +286,7 @@ public final class AppCoordinator: ObservableObject {
             favorites: settings.favoriteBundleIDs,
             windowOwnerPIDs: tick.windowOwnerPIDs
         )
-        let batch = jevAdvisor.syncBatch(load: load, apps: grayApps)
+        let batch = resolvedBatch(jevAdvisor.syncBatch(load: load, apps: grayApps))
         var grouped = overlayBatchActions(groups: tick.groups, actions: batch.actions)
 
         hostMemory = tick.host
@@ -711,13 +717,49 @@ public final class AppCoordinator: ObservableObject {
         }
     }
 
+    private func resolvedBatch(_ live: JevBatchSnapshot) -> JevBatchSnapshot {
+        if !live.actions.isEmpty {
+            return live
+        }
+        let latest = jevAdvisor.latestBatch()
+        if !latest.actions.isEmpty {
+            return latest
+        }
+        return live
+    }
+
+    private func applyResolvedBatch() {
+        guard isRunning else { return }
+        let batch = resolvedBatch(jevAdvisor.latestBatch())
+        var grouped = overlayBatchActions(groups: processGroups, actions: batch.actions)
+        applyBatchDecisions(groups: grouped, batch: batch, now: Date())
+        grouped = grouped.map { group in
+            ProcessGroupViewModel(
+                key: group.key,
+                members: group.members.map { model in
+                    ProcessViewModel(
+                        snapshot: model.snapshot,
+                        score: model.score,
+                        appPath: model.appPath,
+                        appliedAction: executor.appliedAction(pid: model.snapshot.pid)
+                    )
+                }
+            )
+        }
+        grouped = Self.listed(grouped)
+        if processGroups != grouped {
+            processGroups = grouped
+            processes = grouped.flatMap(\.members)
+        }
+        autoStatusText = batchStatusText(batch: batch)
+    }
+
     private func applyBatchDecisions(
         groups: [ProcessGroupViewModel],
         batch: JevBatchSnapshot,
         now: Date
     ) {
         guard jevAdvisor.isActive else { return }
-        guard !batch.pending else { return }
         let items = actionableItems(from: groups, actions: batch.actions)
         guard !items.isEmpty else { return }
         let signature = items.map { "\($0.group.key):\($0.action.rawValue)" }.sorted().joined(separator: "|")
@@ -730,6 +772,9 @@ public final class AppCoordinator: ObservableObject {
             }
         } else if pendingBatch == nil, pendingAction == nil, signature != dismissedBatchSignature {
             pendingBatch = PendingDecisionBatch(id: signature, items: items)
+            JevLog.info(
+                "confirm_pending_set items=\(items.map { "\($0.group.key)=\($0.action.rawValue)" }.joined(separator: ","))"
+            )
         }
     }
 
