@@ -374,19 +374,31 @@ enum JevChecks {
 
         let defaultEP = JevURLSessionClient.resolveEndpoint(baseURLString: "")
         check("empty base → default endpoint", defaultEP == JevURLSessionClient.defaultEndpoint)
+        check(
+            "default base is the full POST URL",
+            JevURLSessionClient.defaultBaseURLString == "https://api.typesafe.ai/v1/systemone"
+        )
+        check(
+            "openrouter preset URL",
+            JevURLSessionClient.openRouterBaseURLString == "https://openrouter.ai/api/alpha/decisions"
+        )
+        check(
+            "openrouter preset model",
+            JevURLSessionClient.openRouterDefaultModel == "~typesafe/jev-latest"
+        )
         let hostEP = JevURLSessionClient.resolveEndpoint(baseURLString: "https://api.typesafe.ai")
-        check("host base appends systemone", hostEP.absoluteString == "https://api.typesafe.ai/v1/systemone")
+        check("host base is used as-is", hostEP.absoluteString == "https://api.typesafe.ai")
         let proxyEP = JevURLSessionClient.resolveEndpoint(baseURLString: "https://gateway.example.com/typesafe/")
         check(
-            "proxy base keeps prefix path",
-            proxyEP.absoluteString == "https://gateway.example.com/typesafe/v1/systemone"
+            "proxy base keeps user path",
+            proxyEP.absoluteString == "https://gateway.example.com/typesafe/"
         )
         let fullEP = JevURLSessionClient.resolveEndpoint(
             baseURLString: "https://gateway.example.com/v1/systemone"
         )
         check("full systemone URL kept", fullEP.absoluteString == "https://gateway.example.com/v1/systemone")
         let bare = JevURLSessionClient.resolveEndpoint(baseURLString: "api.typesafe.ai")
-        check("bare host gets https", bare.absoluteString == "https://api.typesafe.ai/v1/systemone")
+        check("bare host gets https and no path suffix", bare.absoluteString == "https://api.typesafe.ai")
         let openRouter = JevURLSessionClient.resolveEndpoint(
             baseURLString: "https://openrouter.ai/api/alpha/decisions"
         )
@@ -398,8 +410,8 @@ enum JevChecks {
             baseURLString: "https://openrouter.ai/api/alpha/decisions/"
         )
         check(
-            "openrouter decisions trailing slash normalized",
-            openRouterSlash.absoluteString == "https://openrouter.ai/api/alpha/decisions"
+            "openrouter trailing slash kept",
+            openRouterSlash.absoluteString == "https://openrouter.ai/api/alpha/decisions/"
         )
 
         let decodedBase = try JSONDecoder().decode(
@@ -410,6 +422,19 @@ enum JevChecks {
             "settings migrate jevBaseURL default",
             decodedBase.jevBaseURL == JevURLSessionClient.defaultBaseURLString
         )
+        let oldHostDefault = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"authorizationLevel":0,"jevBaseURL":"https://api.typesafe.ai"}"#.utf8)
+        )
+        check(
+            "old host-only default migrates to full URL",
+            oldHostDefault.jevBaseURL == JevURLSessionClient.defaultBaseURLString
+        )
+        let customBase = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"authorizationLevel":0,"jevBaseURL":"https://gateway.example.com/custom"}"#.utf8)
+        )
+        check("custom base URL kept", customBase.jevBaseURL == "https://gateway.example.com/custom")
         check(
             "settings migrate jevModel default",
             decodedBase.jevModel == JevQuestions.defaultModel

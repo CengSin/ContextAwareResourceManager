@@ -77,9 +77,9 @@ public enum AuthorizationLevel: Int, Codable, Sendable, CaseIterable, Identifiab
     public var footnote: String {
         switch self {
         case .suggestOnly:
-            return "Jev 根据系统负载和正在运行的灰区 App 给出保留/降级/退出建议，独立小窗由你确认后才执行。"
+            return "独立小窗确认后才执行。"
         case .sceneSwitch:
-            return "Jev 根据系统负载和正在运行的灰区 App 自动降级或退出，完成后发系统通知。前台、VPN/会议/IM、常用和系统进程不会进名单。没有冻结。"
+            return "自动降级或退出，完成后发系统通知。"
         case .fullyAutomatic:
             return "v3 能力：完全自动处理。当前版本不可用，且默认关闭。"
         }

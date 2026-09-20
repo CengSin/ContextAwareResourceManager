@@ -45,13 +45,13 @@ public protocol JevClientProtocol: Sendable {
 }
 
 public struct JevURLSessionClient: JevClientProtocol, Sendable {
-    public static let defaultBaseURLString = "https://api.typesafe.ai"
-    public static let defaultEndpoint = URL(string: "https://api.typesafe.ai/v1/systemone")!
+    public static let defaultBaseURLString = "https://api.typesafe.ai/v1/systemone"
+    public static let openRouterBaseURLString = "https://openrouter.ai/api/alpha/decisions"
+    public static let openRouterDefaultModel = "~typesafe/jev-latest"
+    public static let defaultEndpoint = URL(string: defaultBaseURLString)!
 
-    /// Resolve a user-configured base URL (or full evaluate URL) to the POST endpoint.
-    /// - Host-only (e.g. `https://api.typesafe.ai`) → append `/v1/systemone`
-    /// - Full TypeSafe URL ending in `/v1/systemone` → keep
-    /// - Full OpenRouter Decisions URL ending in `/api/alpha/decisions` → keep
+    /// Use the configured string as the POST URL. Empty falls back to `defaultEndpoint`.
+    /// Does not append `/v1/systemone` or any other path.
     public static func resolveEndpoint(baseURLString: String) -> URL {
         let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return defaultEndpoint }
@@ -59,34 +59,7 @@ public struct JevURLSessionClient: JevClientProtocol, Sendable {
         if !raw.contains("://") {
             raw = "https://" + raw
         }
-        guard var components = URLComponents(string: raw) else { return defaultEndpoint }
-        // Allow pasting a full evaluate / decisions URL (do not append another path).
-        let path = components.path.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let fullPath = "/" + path
-        if isCompleteEvaluatePath(fullPath) {
-            // Normalize trailing slash away for stable equality / logging.
-            while components.path.hasSuffix("/") {
-                components.path.removeLast()
-            }
-            if let url = components.url { return url }
-            return defaultEndpoint
-        }
-        // Treat as API host/base: strip trailing slash and append /v1/systemone.
-        while components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-        if components.path.isEmpty || components.path == "/" {
-            components.path = "/v1/systemone"
-        } else {
-            components.path += "/v1/systemone"
-        }
-        return components.url ?? defaultEndpoint
-    }
-
-    /// Paths that are already a POST target (not a host/prefix to extend).
-    private static func isCompleteEvaluatePath(_ path: String) -> Bool {
-        let p = path.lowercased()
-        return p.hasSuffix("/v1/systemone") || p.hasSuffix("/api/alpha/decisions")
+        return URL(string: raw) ?? defaultEndpoint
     }
 
     public var session: URLSession

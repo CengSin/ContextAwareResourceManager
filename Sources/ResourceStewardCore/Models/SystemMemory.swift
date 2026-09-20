@@ -150,9 +150,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var scoringRevision: Int
     /// When true and a TypeSafe API key is in Keychain, gray-zone reclaim consults Jev.
     public var jevReclaimEnabled: Bool
-    /// TypeSafe / proxy API host. Path `/v1/systemone` is appended unless already present.
+    /// TypeSafe `/v1/systemone` or OpenRouter `/api/alpha/decisions`. Used as-is.
     public var jevBaseURL: String
-    /// TypeSafe / OpenRouter / gateway model id (e.g. `jev-latest` or `typesafe-ai/jev`).
+    /// TypeSafe `jev-latest` or OpenRouter `~typesafe/jev-latest`.
     public var jevModel: String
 
     public init(
@@ -226,8 +226,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
         showOnlyActionable = try container.decodeIfPresent(Bool.self, forKey: .showOnlyActionable) ?? false
         favoriteApps = try container.decodeIfPresent([FavoriteApp].self, forKey: .favoriteApps) ?? []
         jevReclaimEnabled = try container.decodeIfPresent(Bool.self, forKey: .jevReclaimEnabled) ?? false
-        jevBaseURL = try container.decodeIfPresent(String.self, forKey: .jevBaseURL)
-            ?? JevURLSessionClient.defaultBaseURLString
+        jevBaseURL = Self.normalizedStoredBaseURL(
+            try container.decodeIfPresent(String.self, forKey: .jevBaseURL)
+        )
         jevModel = try container.decodeIfPresent(String.self, forKey: .jevModel)
             ?? JevQuestions.defaultModel
         var revision = try container.decodeIfPresent(Int.self, forKey: .scoringRevision) ?? 0
@@ -260,6 +261,17 @@ public struct AppSettings: Codable, Sendable, Equatable {
         try container.encode(jevReclaimEnabled, forKey: .jevReclaimEnabled)
         try container.encode(jevBaseURL, forKey: .jevBaseURL)
         try container.encode(jevModel, forKey: .jevModel)
+    }
+
+    /// Missing / blank → current default. The previous default was host-only
+    /// (`https://api.typesafe.ai`) because the client appended `/v1/systemone`.
+    static func normalizedStoredBaseURL(_ stored: String?) -> String {
+        let trimmed = (stored ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return JevURLSessionClient.defaultBaseURLString }
+        if trimmed == "https://api.typesafe.ai" || trimmed == "https://api.typesafe.ai/" {
+            return JevURLSessionClient.defaultBaseURLString
+        }
+        return trimmed
     }
 }
 
