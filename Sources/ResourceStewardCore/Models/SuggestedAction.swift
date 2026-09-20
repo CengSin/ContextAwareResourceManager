@@ -39,7 +39,7 @@ public enum SuggestedAction: String, Codable, Sendable, CaseIterable, Identifiab
         }
     }
 
-    /// Product actions Jev may choose. Freeze is retired.
+    
     public var isActable: Bool {
         self == .throttle || self == .quit
     }

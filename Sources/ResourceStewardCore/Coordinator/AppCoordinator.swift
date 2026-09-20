@@ -551,8 +551,8 @@ public final class AppCoordinator: ObservableObject {
             .sorted(by: Self.displayOrder)
     }
 
-    /// Score-sorted, but large / foreground / already-handled apps are never dropped.
-    /// Otherwise a busy Chrome family (score 0 while in use) falls out of the top 80.
+    
+    
     nonisolated public static func listed(_ groups: [ProcessGroupViewModel], limit: Int = 80) -> [ProcessGroupViewModel] {
         if groups.count <= limit { return groups }
         var keys = Set<String>()
@@ -582,7 +582,7 @@ public final class AppCoordinator: ObservableObject {
         refresh()
     }
 
-    /// Crash / force-quit cannot SIGCONT. Resume anything still listed from last session.
+    
     private func thawLeftoverFreezes() {
         let leftover = store.loadFrozen()
         guard !leftover.isEmpty else { return }
@@ -612,13 +612,13 @@ public final class AppCoordinator: ObservableObject {
         try? store.replaceFrozen(items)
     }
 
-    /// SIGSTOP of an AppKit app with windows can hang WindowServer. Resume any that
-    /// an older build froze, and drop them from the freeze list.
+    
+    
     private func thawWindowedIfFrozen(ownerPIDs: Set<Int32>? = nil) {
         let stuck = executor.frozenProcesses.filter { item in
             let bundleID = item.bundleID.isEmpty ? nil : item.bundleID
             if executor.reuseWindowOwnerPIDs || ownerPIDs != nil {
-                // Use the tick's owner set — never re-fetch CGWindowList per frozen pid.
+                
                 return WindowedProcessPolicy.isUnsafeToFreeze(
                     pid: item.pid,
                     bundleID: bundleID,
@@ -636,8 +636,8 @@ public final class AppCoordinator: ObservableObject {
         }
     }
 
-    /// Container / VPN keep-alive processes must never stay SIGSTOP'd, even if an older
-    /// build froze them. Resume and drop them from the freeze list on every sample.
+    
+    
     private func thawKeepAliveIfFrozen() {
         let extras = settings.favoriteBundleIDs
         let stuck = executor.frozenProcesses.filter {
@@ -666,7 +666,7 @@ public final class AppCoordinator: ObservableObject {
         refresh()
     }
 
-    /// Dock, Spotlight, or Cmd-Tab of a frozen app is an explicit "I need this now".
+    
     @discardableResult
     private func thawOnUserOpen(bundleID: String, processName: String) -> Int {
         let count = executor.thawMatchingActivation(bundleID: bundleID, processName: processName)
@@ -733,7 +733,7 @@ public final class AppCoordinator: ObservableObject {
 
     private func applyResolvedBatch() {
         guard isRunning else { return }
-        // Resample load, foreground and generations before consuming a response.
+        
         refresh()
     }
 

@@ -1,6 +1,6 @@
 import Foundation
 
-/// What to do with a third-party app when it is idle and not in the foreground.
+
 public enum AppIdlePolicy: String, Codable, Sendable, CaseIterable, Identifiable {
     case keep
     case throttle
@@ -34,7 +34,7 @@ public enum AppClassificationSource: String, Codable, Sendable {
 }
 
 public struct AppClassification: Codable, Sendable, Equatable, Identifiable {
-    /// Bump when classify questions/composer change so stored Jev rows are re-asked.
+    
     public static let currentSchemaVersion = 2
 
     public var id: String { bundleID }

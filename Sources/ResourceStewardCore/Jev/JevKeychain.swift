@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-/// Stores the TypeSafe API key in the macOS Keychain. Never persists the key in SQLite.
+
 public enum JevKeychain {
     public static let service = "cc.resourcesteward.jev"
     public static let account = "api-key"

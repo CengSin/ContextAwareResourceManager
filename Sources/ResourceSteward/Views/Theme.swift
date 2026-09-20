@@ -6,17 +6,17 @@ enum Theme {
     static let panelWidth: CGFloat = 430
     static let panelHeight: CGFloat = 630
 
-    // MARK: - Radius
+    
     static let cornerRadiusCard: CGFloat = 10
     static let cornerRadiusPill: CGFloat = 20
     static let cornerRadiusIcon: CGFloat = 6
 
-    // MARK: - Semantic Colors
+    
     static func pressureColor(_ level: MemoryPressureLevel) -> Color {
         switch level {
-        case .normal: return Color(red: 0.20, green: 0.82, blue: 0.50) // Emerald Green
-        case .warning: return Color(red: 0.98, green: 0.73, blue: 0.16) // Amber Gold
-        case .critical: return Color(red: 0.98, green: 0.35, blue: 0.30) // Coral Red
+        case .normal: return Color(red: 0.20, green: 0.82, blue: 0.50) 
+        case .warning: return Color(red: 0.98, green: 0.73, blue: 0.16) 
+        case .critical: return Color(red: 0.98, green: 0.35, blue: 0.30) 
         }
     }
 
@@ -36,17 +36,17 @@ enum Theme {
     static func actionColor(_ action: SuggestedAction) -> Color {
         switch action {
         case .none: return .secondary
-        case .throttle: return Color(red: 0.32, green: 0.62, blue: 0.98) // Electric Blue
-        case .freeze: return Color(red: 0.98, green: 0.54, blue: 0.18) // Warm Amber
-        case .quit: return Color(red: 0.98, green: 0.34, blue: 0.30) // Coral Rose
+        case .throttle: return Color(red: 0.32, green: 0.62, blue: 0.98) 
+        case .freeze: return Color(red: 0.98, green: 0.54, blue: 0.18) 
+        case .quit: return Color(red: 0.98, green: 0.34, blue: 0.30) 
         }
     }
 
-    static let favoriteColor = Color(red: 0.68, green: 0.46, blue: 0.96) // Soft Violet
-    static let foregroundColor = Color(red: 0.22, green: 0.80, blue: 0.52) // Mint
+    static let favoriteColor = Color(red: 0.68, green: 0.46, blue: 0.96) 
+    static let foregroundColor = Color(red: 0.22, green: 0.80, blue: 0.52) 
 }
 
-// MARK: - Subtle Card Modifier
+
 struct ModernCardModifier: ViewModifier {
     var isHovered: Bool = false
     var cornerRadius: CGFloat = Theme.cornerRadiusCard
@@ -113,9 +113,9 @@ enum AppIconCache {
         return images[path]
     }
 
-    /// Load off the main thread into `cached(_:)`. `icon(forFile:)` hits disk;
-    /// doing it on MainActor stalls the menu. Completes with `Void` because
-    /// `NSImage` is not Sendable and cannot be returned across isolation.
+    
+    
+    
     static func load(path: String?, bundleID: String? = nil) async {
         guard let resolved = resolvePath(path: path, bundleID: bundleID), !resolved.isEmpty else {
             return

@@ -1,7 +1,7 @@
 import Foundation
 
-/// Static restartability bonus in 0...1. Higher means safer to quit/freeze.
-/// Default is 0.5 per spec.
+
+
 public enum RestartabilityTable: Sendable {
     public static let `default`: Double = 0.5
 
@@ -38,7 +38,7 @@ public enum RestartabilityTable: Sendable {
         "com.jetbrains.datagrip": 0.15,
         "com.jetbrains.rustrover": 0.15,
         "com.google.android.studio": 0.15,
-        "com.todesktop.230313mzl4w4u92": 0.2, // Cursor
+        "com.todesktop.230313mzl4w4u92": 0.2, 
         "dev.warp.Warp-Stable": 0.35,
         "com.googlecode.iterm2": 0.35,
         "com.apple.Terminal": 0.35,

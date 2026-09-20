@@ -92,7 +92,7 @@ public struct HostMemory: Sendable, Equatable {
 
     public func inferredPressure(sourceLevel: MemoryPressureLevel?) -> MemoryPressureLevel {
         if let sourceLevel, sourceLevel == .critical { return .critical }
-        // swapins/swapouts are cumulative since boot; only current swap usage is a live signal.
+        
         if swapUsedBytes > 1_073_741_824 {
             return .critical
         }
@@ -146,13 +146,13 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var hasCompletedOnboarding: Bool
     public var showOnlyActionable: Bool
     public var favoriteApps: [FavoriteApp]
-    /// Bumped when seed-user scoring defaults change. 1 = 45 min idle cap / 2 GB memory cap.
+    
     public var scoringRevision: Int
-    /// When true and a TypeSafe API key is in Keychain, gray-zone reclaim consults Jev.
+    
     public var jevReclaimEnabled: Bool
-    /// TypeSafe `/v1/systemone` or OpenRouter `/api/alpha/decisions`. Used as-is.
+    
     public var jevBaseURL: String
-    /// TypeSafe `jev-latest` or OpenRouter `~typesafe/jev-latest`.
+    
     public var jevModel: String
 
     public init(
@@ -213,8 +213,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         var decodedWeights = try container.decodeIfPresent(ScoreWeights.self, forKey: .weights) ?? .default
         matchingWindowMinutes = try container.decodeIfPresent(Double.self, forKey: .matchingWindowMinutes) ?? 10
         if let storedThreshold = try container.decodeIfPresent(Double.self, forKey: .matchingThreshold) {
-            // 0.2 was the Jaccard default; evidence matching uses 0.6 so shared apps
-            // like Chrome cannot classify a scene by themselves.
+            
+            
             matchingThreshold = abs(storedThreshold - 0.2) < 0.0001
                 ? 0.6
                 : storedThreshold
@@ -233,8 +233,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
             ?? JevQuestions.defaultModel
         var revision = try container.decodeIfPresent(Int.self, forKey: .scoringRevision) ?? 0
         if revision < 1 {
-            // Seed-user calibration: 120 min / 8 GB caps made freeze unreachable for
-            // typical idle browsers, so Level 1 only auto-throttled daemons.
+            
+            
             if abs(decodedWeights.idleCapMinutes - 120) < 0.1 {
                 decodedWeights.idleCapMinutes = 45
             }
@@ -263,8 +263,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         try container.encode(jevModel, forKey: .jevModel)
     }
 
-    /// Missing / blank → current default. The previous default was host-only
-    /// (`https://api.typesafe.ai`) because the client appended `/v1/systemone`.
+    
+    
     static func normalizedStoredBaseURL(_ stored: String?) -> String {
         let trimmed = (stored ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return JevURLSessionClient.defaultBaseURLString }
@@ -308,7 +308,7 @@ public struct FrozenProcess: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Avoid rewriting SQLite frozen rows when the frozen PID set is unchanged.
+
 public enum FrozenPersistPolicy: Sendable {
     public static func signature(_ items: [FrozenProcess]) -> Set<String> {
         Set(items.map(\.generation.key))

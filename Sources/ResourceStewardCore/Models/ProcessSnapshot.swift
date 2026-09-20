@@ -66,7 +66,7 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
         return processName
     }
 
-    /// Ignore sample time so a 5s refresh does not look like a new row.
+    
     public static func == (lhs: ProcessSnapshot, rhs: ProcessSnapshot) -> Bool {
         lhs.pid == rhs.pid
             && lhs.uid == rhs.uid
@@ -106,7 +106,7 @@ public struct RawProcessSample: Sendable, Equatable {
     }
 }
 
-/// PID plus kernel start time. Distinguishes a reused PID from the process we acted on.
+
 public struct ProcessGeneration: Sendable, Equatable, Hashable {
     public let pid: Int32
     public let startUnix: TimeInterval

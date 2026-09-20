@@ -52,8 +52,8 @@ public enum ReclaimScorer: Sendable {
             processName: snapshot.processName
         )
 
-        // Spec: score is normalized to 0-100. Positive terms are scaled by (w1+w2+w3)
-        // so the 85 quit threshold is reachable; penalties are then subtracted.
+        
+        
         let maxPositive = weights.positiveSum
         let idleContribution = weights.idle * idleN / maxPositive * 100
         let memoryContribution = weights.memory * memN / maxPositive * 100

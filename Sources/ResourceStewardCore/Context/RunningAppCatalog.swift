@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 public enum WorkspaceAppEligibility: Sendable {
-    /// NSApplication.ActivationPolicy: regular=0, accessory=1, prohibited=2.
+    
     public static func shouldList(
         bundleID: String?,
         name: String,

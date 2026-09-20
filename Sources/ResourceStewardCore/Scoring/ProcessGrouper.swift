@@ -1,6 +1,6 @@
 import Foundation
 
-/// NSRunningApplication identity used to seed process groups.
+
 public struct AppProcessHint: Sendable, Equatable {
     public var pid: Int32
     public var bundleID: String?
@@ -33,7 +33,7 @@ public struct AppProcessHint: Sendable, Equatable {
     }
 }
 
-/// Groups processes by running-app hints, bundle path, parent PID, then Chromium-style bundle roots.
+
 public enum ProcessGrouper: Sendable {
     public static func keys(
         snapshots: [ProcessSnapshot],

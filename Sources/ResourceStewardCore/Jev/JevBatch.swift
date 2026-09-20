@@ -1,6 +1,6 @@
 import Foundation
 
-/// One gray-zone running app in a load-aware Jev batch.
+
 public struct JevGrayApp: Codable, Sendable, Equatable {
     public var index: Int
     public var bundle_id: String

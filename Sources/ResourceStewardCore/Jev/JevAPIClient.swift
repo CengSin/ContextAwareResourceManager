@@ -50,8 +50,8 @@ public struct JevURLSessionClient: JevClientProtocol, Sendable {
     public static let openRouterDefaultModel = "~typesafe/jev-latest"
     public static let defaultEndpoint = URL(string: defaultBaseURLString)!
 
-    /// Use the configured string as the POST URL. Empty falls back to `defaultEndpoint`.
-    /// Does not append `/v1/systemone` or any other path.
+    
+    
     public static func resolveEndpoint(baseURLString: String) -> URL {
         let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return defaultEndpoint }
@@ -307,7 +307,7 @@ public enum JevResponseParser: Sendable {
     }
 }
 
-/// Test double / injectable client.
+
 public struct JevMockClient: JevClientProtocol, Sendable {
     public var result: Result<JevClientResult, JevClientError>
     public var onEvaluate: (@Sendable (JevRequestState) -> Void)?

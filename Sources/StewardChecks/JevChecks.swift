@@ -13,7 +13,7 @@ enum JevChecks {
             }
         }
 
-        // Composition fixtures — no network.
+        
         let safeFreeze = JevEvaluationAnswers(
             looksLikeNetworkOrSync: 0.1,
             looksLikeCommunication: 0.1,
@@ -99,7 +99,7 @@ enum JevChecks {
         )
         check("compose confidence → none", JevComposer.compose(lowConf).rule == .confidence)
 
-        // Hard gates: WeChat / Notes never call client.
+        
         final class EvaluateCounter: @unchecked Sendable {
             var value = 0
         }
@@ -320,7 +320,7 @@ enum JevChecks {
             ).isEmpty
         )
 
-        // Response parser
+        
         let json = """
         {
           "model": "jev-1.13.0",
@@ -346,7 +346,7 @@ enum JevChecks {
         check("parser preferred freeze", parsedResponse.answers.preferredAction.choice == "freeze")
         check("parser usage tokens", parsedResponse.usage.inputTokens == 100 && parsedResponse.usage.outputTokens == 20)
 
-        // Mock error → fail-closed decision path via composer already tested; incomplete parse
+        
         do {
             _ = try JevResponseParser.parse(
                 data: #"{"model":"jev-latest","answers":{}}"#.data(using: .utf8)!,
@@ -361,13 +361,13 @@ enum JevChecks {
             check("incomplete answers throw", false)
         }
 
-        // Settings migration: missing jevReclaimEnabled defaults false
+        
         let legacy = #"{"authorizationLevel":0,"weights":{},"matchingWindowMinutes":10,"matchingThreshold":0.6,"sampleIntervalSeconds":5,"hasCompletedOnboarding":true,"showOnlyActionable":false,"favoriteApps":[],"scoringRevision":1}"#
         let decoded = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
         check("settings migrate jev default off", decoded.jevReclaimEnabled == false)
 
         check("log subsystem name", JevLog.subsystem == "cc.resourcesteward.jev")
-        // Smoke: once/throttle helpers are callable (no assert on side effects).
+        
         JevLog.infoOnce(key: "check-once", "check_once_ok")
         JevLog.infoThrottled(key: "check-throttle", interval: 3600, "check_throttle_ok")
         check("log helpers callable", true)
@@ -460,7 +460,7 @@ enum JevChecks {
         let waiting = batchAdvisor.syncBatch(load: changed, apps: [app])
         check("new load never reuses old quit while pending", waiting.pending && waiting.actions.isEmpty && batchAdvisor.latestBatch().actions.isEmpty)
         check("second request starts", controlled.started.wait(timeout: .now() + 2) == .success)
-        // Invalidate request 1 by changing the foreground; request 2 completes first.
+        
         changed.foreground_bundle_id = "com.example.editor"
         _ = batchAdvisor.syncBatch(load: changed, apps: [app])
         check("foreground change starts fresh request", controlled.started.wait(timeout: .now() + 2) == .success)
@@ -494,7 +494,7 @@ enum JevChecks {
     }
 }
 
-/// Holds responses so checks can drive cache invalidation and out-of-order replies.
+
 private final class ControlledBatchClient: JevClientProtocol, @unchecked Sendable {
     private let lock = NSLock()
     private var replies: [String: CheckedContinuation<JevPayloadResult, Error>] = [:]

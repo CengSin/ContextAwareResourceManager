@@ -7,7 +7,7 @@ struct FavoriteAppsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Compact Explanatory Pill
+            
             HStack(spacing: 6) {
                 Image(systemName: "shield.fill")
                     .font(.system(size: 10))
@@ -23,7 +23,7 @@ struct FavoriteAppsView: View {
             .padding(.horizontal, 14)
             .padding(.top, 4)
 
-            // Current Favorites Section: Single-line Horizontal Chip Carousel
+            
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("已保活应用")
@@ -82,14 +82,14 @@ struct FavoriteAppsView: View {
 
             Divider().padding(.horizontal, 14)
 
-            // Inline Section Title & Search Box
+            
             HStack(spacing: 8) {
                 Text("从运行中选择")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.secondary)
                 Spacer()
 
-                // Compact Search Box
+                
                 HStack(spacing: 5) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 10))
@@ -120,7 +120,7 @@ struct FavoriteAppsView: View {
             }
             .padding(.horizontal, 14)
 
-            // Running Apps Selector ScrollView with Maximized Height
+            
             ScrollView {
                 LazyVStack(spacing: 4) {
                     if filteredApps.isEmpty {

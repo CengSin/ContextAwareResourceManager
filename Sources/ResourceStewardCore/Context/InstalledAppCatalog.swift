@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// Third-party `.app` bundles the user installed. System (`com.apple.*`) apps are out of scope.
+
 public enum InstalledAppCatalog: Sendable {
     public static func scan(
         extraRoots: [URL] = []

@@ -1,17 +1,17 @@
 import Foundation
 import os
 
-/// Structured logging for Jev reclaim. Never log API keys or Authorization headers.
-///
-/// File log (`jev-reclaim.log`) is for actionable events only (config, requests, errors).
-/// High-churn hard-gate skips stay on OSLog debug and at most once-per-key on disk.
+
+
+
+
 public enum JevLog {
     public static let subsystem = "cc.resourcesteward.jev"
     private static let logger = Logger(subsystem: subsystem, category: "reclaim")
     private static let queue = DispatchQueue(label: "cc.resourcesteward.jev.log")
     private static let ringBox = RingBox()
     private static let ringLimit = 400
-    /// Soft cap for on-disk log; oversized files are rotated before append.
+    
     private static let maxFileBytes: UInt64 = 512_000
 
     private final class RingBox: @unchecked Sendable {
@@ -30,13 +30,13 @@ public enum JevLog {
         append("ERROR " + message, toFile: true)
     }
 
-    /// OSLog + ring only — does not grow `jev-reclaim.log`.
+    
     public static func debug(_ message: String) {
         logger.debug("\(message, privacy: .public)")
         append(message, toFile: false)
     }
 
-    /// Persist at most once per process lifetime for `key`.
+    
     public static func infoOnce(key: String, _ message: String) {
         let should = queue.sync { () -> Bool in
             if ringBox.onceKeys.contains(key) { return false }
@@ -50,7 +50,7 @@ public enum JevLog {
         }
     }
 
-    /// Persist at most once per `interval` for `key` (default 10 minutes).
+    
     public static func infoThrottled(key: String, interval: TimeInterval = 600, _ message: String) {
         let now = Date()
         let should = queue.sync { () -> Bool in

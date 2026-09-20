@@ -3,7 +3,7 @@ import Foundation
 import ProcBridge
 
 public final class SystemMonitor: @unchecked Sendable {
-    /// How often to hit IOKit / `rs_host_gpu`. Between samples, `sampleGPU` reuses the last value.
+    
     public static let gpuSampleIntervalSeconds: TimeInterval = 20
 
     private let lock = NSLock()
@@ -12,7 +12,7 @@ public final class SystemMonitor: @unchecked Sendable {
     private let gpuWindowSize = 5
     private var lastGPU: HostGPU = .unavailable
     private var lastGPUSampleAt: Date = .distantPast
-    /// Counts hardware GPU samples (not cache hits). Useful for StewardChecks.
+    
     public private(set) var gpuHardwareSampleCount = 0
     private var previousProcessCPU: [Int32: (timeNs: UInt64, sampledAt: Date)] = [:]
 
@@ -83,8 +83,8 @@ public final class SystemMonitor: @unchecked Sendable {
         previousCPU = current
         lock.unlock()
         guard let previous else {
-            // First tick has no delta. Do not usleep on the caller thread
-            // (refresh used to sleep 120ms on the main thread).
+            
+            
             return .empty
         }
         return HostCPU.fromTicks(

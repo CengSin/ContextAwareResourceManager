@@ -34,7 +34,7 @@ public final class LocalStore: @unchecked Sendable {
 
     public var filePath: String { path }
 
-    // MARK: - Settings
+    
 
     public func loadSettings() -> AppSettings {
         queue.sync {
@@ -60,7 +60,7 @@ public final class LocalStore: @unchecked Sendable {
         }
     }
 
-    // MARK: - Workspaces
+    
 
     public func loadWorkspaces() -> [Workspace] {
         queue.sync {
@@ -108,7 +108,7 @@ public final class LocalStore: @unchecked Sendable {
         }
     }
 
-    // MARK: - Snapshots & activations
+    
 
     public func insertSnapshot(_ snapshot: ProcessSnapshot) throws {
         try queue.sync {
@@ -413,7 +413,7 @@ public final class LocalStore: @unchecked Sendable {
         }
     }
 
-    // MARK: - Internals
+    
 
     private func openLocked() throws {
         if sqlite3_open(path, &db) != SQLITE_OK {

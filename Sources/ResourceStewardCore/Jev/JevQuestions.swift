@@ -1,6 +1,6 @@
 import Foundation
 
-/// Typed questions sent in one System One request (parallel answers).
+
 public enum JevQuestions: Sendable {
     public static let defaultModel = "jev-latest"
 

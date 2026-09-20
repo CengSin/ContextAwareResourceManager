@@ -36,7 +36,7 @@ struct MenuBarPanel: View {
 
     private var header: some View {
         VStack(spacing: 10) {
-            // Title & Mode Bar
+            
             HStack(alignment: .center) {
                 HStack(spacing: 6) {
                     Image(systemName: "memorychip")
@@ -67,17 +67,17 @@ struct MenuBarPanel: View {
                 }
             }
 
-            // Dashboard Card: Circular Gauge + Resource Bars
+            
             HStack(spacing: 14) {
-                // Left: Circular RAM Gauge
+                
                 VStack(spacing: 4) {
                     ZStack {
-                        // Background track
+                        
                         Circle()
                             .stroke(Color.primary.opacity(0.08), lineWidth: 5)
                             .frame(width: 58, height: 58)
 
-                        // Active arc
+                        
                         Circle()
                             .trim(from: 0, to: CGFloat(min(1.0, max(0.03, ramPercent / 100.0))))
                             .stroke(
@@ -88,7 +88,7 @@ struct MenuBarPanel: View {
                             .frame(width: 58, height: 58)
                             .shadow(color: Theme.pressureColor(coordinator.pressure).opacity(0.25), radius: 3)
 
-                        // Center content
+                        
                         VStack(spacing: 0) {
                             Text("RAM")
                                 .font(.system(size: 8, weight: .bold))
@@ -110,7 +110,7 @@ struct MenuBarPanel: View {
                 }
                 .padding(.vertical, 2)
 
-                // Right: CPU, GPU & Memory Stat Bars
+                
                 VStack(alignment: .leading, spacing: 7) {
                     MinimalStatBar(
                         title: "CPU",
@@ -137,14 +137,14 @@ struct MenuBarPanel: View {
             }
             .modernCard(padding: 10)
 
-            // Context Awareness Pill
+            
             HStack(spacing: 6) {
                 Image(systemName: coordinator.estimatedReleaseMB > 0 ? "sparkles" : "waveform.path.ecg")
                     .font(.system(size: 10))
                     .foregroundStyle(coordinator.estimatedReleaseMB > 0 ? Color.accentColor : .secondary)
 
                 if coordinator.estimatedReleaseMB > 0 {
-                    Text("场景感知 · 发现闲置后台应用，预计可释放 \(ByteFormat.mb(coordinator.estimatedReleaseMB))")
+                    Text("发现闲置后台应用，预计可释放 \(ByteFormat.mb(coordinator.estimatedReleaseMB))")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Color.primary)
                 } else {
@@ -172,7 +172,7 @@ struct MenuBarPanel: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            // Capsule Tab Switcher
+            
             HStack(spacing: 2) {
                 ForEach(PanelTab.allCases) { tab in
                     let isSelected = selectedTab == tab

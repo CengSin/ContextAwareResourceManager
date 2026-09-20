@@ -73,11 +73,11 @@ public final class JevCache: @unchecked Sendable {
         queue.sync { loadLocked() }
     }
 
-    /// In-memory only (unit tests).
+    
     public init(memoryOnly: Bool) {
         self.fileURL = URL(fileURLWithPath: "/dev/null")
         if !memoryOnly {
-            // keep API symmetry; unused
+            
         }
     }
 

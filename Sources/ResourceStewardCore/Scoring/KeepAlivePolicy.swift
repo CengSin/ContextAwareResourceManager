@@ -1,10 +1,10 @@
 import Foundation
 
-/// Apps that must keep running across every workspace.
-///
-/// - VPN / proxy / tunnels: freezing Shadowrocket (or Clash / Surge / WireGuard) drops the network path.
-/// - Container / VM runtimes: freezing OrbStack's `vmgr` pauses the Linux VM, so MySQL and other
-///   containers stop accepting writes. Docker Desktop / Colima / Podman have the same failure mode.
+
+
+
+
+
 public enum KeepAlivePolicy: Sendable {
     public static let bundleIDs: Set<String> = [
         "com.liguangming.Shadowrocket",
@@ -147,8 +147,8 @@ public enum KeepAlivePolicy: Sendable {
         return fragments.contains { blob.contains($0) }
     }
 
-    /// User-picked apps that must stay up in every workspace (MySQL GUI, IDE, etc.).
-    /// Matches the stored ID and its process-family root, so a Chrome favorite also covers Helpers.
+    
+    
     public static func isUserListed(bundleID: String?, extras: Set<String>) -> Bool {
         guard !extras.isEmpty else { return false }
         if let bundleID, extras.contains(bundleID) { return true }

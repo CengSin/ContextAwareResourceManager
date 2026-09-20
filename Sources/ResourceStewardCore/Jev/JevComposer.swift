@@ -1,11 +1,11 @@
 import Foundation
 
-/// Deterministic composition of Jev answers into a SuggestedAction (fail-closed).
+
 public enum JevComposer: Sendable {
     public static let riskThreshold = 0.55
     public static let needsSoonThreshold = 0.6
     public static let safeThreshold = 0.65
-    /// Floor to act at all (throttle / display). Freeze and quit need a higher bar.
+    
     public static let confidenceThreshold = 0.7
     public static let freezeConfidenceThreshold = 0.85
     public static let quitConfidenceThreshold = 0.85

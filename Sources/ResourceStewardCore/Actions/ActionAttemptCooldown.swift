@@ -1,7 +1,7 @@
 import Foundation
 
-/// Bounds retries without permanently suppressing an unchanged recommendation.
-/// Both successful requests (an app may decline quit) and failures can be retried.
+
+
 public struct ActionAttemptCooldown {
     private var attemptedAt: [String: Date] = [:]
     public let interval: TimeInterval

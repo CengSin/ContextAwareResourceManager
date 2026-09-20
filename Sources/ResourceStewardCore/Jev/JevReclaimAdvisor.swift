@@ -1,6 +1,6 @@
 import Foundation
 
-/// Orchestrates hard-gate checks, caching, async Jev calls, and fail-closed overrides.
+
 public final class JevReclaimAdvisor: @unchecked Sendable {
     public struct Decision: Sendable, Equatable {
         public var action: SuggestedAction
@@ -26,10 +26,10 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
 
     private let client: any JevClientProtocol
     private let cache: JevCache
-    /// Serializes inFlight/decisions; safe from async contexts.
+    
     private let stateQueue = DispatchQueue(label: "cc.resourcesteward.jev.advisor")
     private var inFlight: Set<String> = []
-    /// Fresh composed decisions keyed by bundle ID.
+    
     private var decisions: [String: Decision] = [:]
     private var batchInFlight = false
     private var batchEpoch = UUID()
@@ -103,8 +103,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         stateQueue.sync(execute: body)
     }
 
-    /// Apply Jev override to a scorer suggestion for display (suggest-only / list).
-    /// Pending leaves the scorer suggestion unchanged for display; auto uses `decisionForAuto`.
+    
+    
     public func adjustSuggestion(
         scorerAction: SuggestedAction,
         candidate: JevHardGate.Candidate,
@@ -178,7 +178,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         return scorerAction
     }
 
-    /// Fail-closed for Level-1 auto: pending / missing / error → none.
+    
     public func decisionForAuto(
         candidate: JevHardGate.Candidate,
         pressure: MemoryPressureLevel,
@@ -191,7 +191,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     ) -> SuggestedAction {
         guard isActive else { return scorerAction }
         if let (reason, detail) = JevHardGate.skipReason(for: candidate) {
-            // Same gate as adjustSuggestion; avoid a second file line every auto tick.
+            
             JevLog.debug("auto_skip hard_gate=\(reason.rawValue) detail=\(detail) bundle=\(candidate.bundleID)")
             return .none
         }
@@ -387,7 +387,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         withState { onBatchResolved = handler }
     }
 
-    /// Load + gray-zone running apps in one Jev request. Fail-closed while pending.
+    
     public func syncBatch(
         load: JevLoadState,
         apps: [JevGrayApp],
@@ -508,7 +508,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         }
     }
 
-    /// Re-apply the freeze ceiling on every read: window state can change after a cached Jev answer.
+    
     private func finalize(
         _ action: SuggestedAction,
         candidate: JevHardGate.Candidate,

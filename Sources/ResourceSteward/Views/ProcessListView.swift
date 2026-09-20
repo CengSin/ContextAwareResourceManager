@@ -8,7 +8,7 @@ struct ProcessListView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // Status/Alert Banner if present
+            
             if let message = coordinator.lastMessage {
                 HStack(spacing: 6) {
                     Image(systemName: coordinator.lastMessageIsError ? "exclamationmark.triangle.fill" : "info.circle.fill")
@@ -29,14 +29,14 @@ struct ProcessListView: View {
                 .padding(.top, 4)
             }
 
-            // Old frozen processes warning (if any)
+            
             if !coordinator.frozen.isEmpty {
                 frozenSection
             }
 
-            // Search Bar & Filter Header
+            
             HStack(spacing: 8) {
-                // Raycast style search box
+                
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 11))
@@ -64,7 +64,7 @@ struct ProcessListView: View {
                         .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
                 )
 
-                // Actionable Filter Toggle
+                
                 Toggle(isOn: actionableBinding) {
                     Text("只看建议")
                         .font(.system(size: 10, weight: .medium))
@@ -75,7 +75,7 @@ struct ProcessListView: View {
             }
             .padding(.horizontal, 14)
 
-            // Content List or Empty State
+            
             if displayedGroups.isEmpty {
                 VStack(spacing: 10) {
                     Spacer()
@@ -197,7 +197,7 @@ private struct ProcessGroupRow: View, Equatable {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Main App Row
+            
             HStack(alignment: .center, spacing: 10) {
                 AppIconView(
                     path: group.appPath,
@@ -245,7 +245,7 @@ private struct ProcessGroupRow: View, Equatable {
                         }
                     }
 
-                    // Resource details: Memory + CPU + Idle time
+                    
                     HStack(spacing: 6) {
                         Text(ByteFormat.mb(group.totalMemoryMB))
                             .font(.system(size: 10, weight: .semibold, design: .rounded))
@@ -273,7 +273,7 @@ private struct ProcessGroupRow: View, Equatable {
 
                 Spacer(minLength: 4)
 
-                // Action Pill or Trigger Button
+                
                 HStack(spacing: 6) {
                     if group.appliedAction == .freeze {
                         Button("恢复") {
@@ -306,7 +306,7 @@ private struct ProcessGroupRow: View, Equatable {
                             .background(Theme.actionColor(statusAction).opacity(0.12), in: Capsule())
                     }
 
-                    // Score indicator pill
+                    
                     Text(String(format: "%.0f", group.score.score))
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .monospacedDigit()
@@ -315,7 +315,7 @@ private struct ProcessGroupRow: View, Equatable {
                 }
             }
 
-            // Expanded detail section
+            
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
                     Divider().padding(.vertical, 2)
@@ -364,7 +364,7 @@ private struct ProcessGroupRow: View, Equatable {
                         }
                     }
 
-                    // Alternate actions row
+                    
                     HStack(spacing: 6) {
                         ForEach(alternateActions, id: \.rawValue) { action in
                             Button(action.title) {

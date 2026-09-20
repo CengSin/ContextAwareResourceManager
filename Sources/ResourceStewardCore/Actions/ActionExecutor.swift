@@ -34,16 +34,16 @@ public final class ActionExecutor: @unchecked Sendable {
     private var frozen: [Int32: FrozenProcess] = [:]
     private var throttled: [Int32: ThrottleRecord] = [:]
     private let currentUID = getuid()
-    /// Test seam. `nil` means ask the kernel.
+    
     public var lookupGeneration: ((Int32) -> ProcessGeneration?)?
     public var currentForeground: () -> (pid: Int32, bundleID: String?) = {
         let app = NSWorkspace.shared.frontmostApplication
         return (app?.processIdentifier ?? 0, app?.bundleIdentifier)
     }
     public var extraKeepAliveBundleIDs: Set<String> = []
-    /// Tick-scoped window-owner PID set from `AppCoordinator.refresh`.
-    /// When `reuseWindowOwnerPIDs` is true, freeze-safety uses this value as-is
-    /// (`nil` still means fail-closed) and does not call `CGWindowListCopyWindowInfo` again.
+    
+    
+    
     public var windowOwnerPIDs: Set<Int32>?
     public var reuseWindowOwnerPIDs = false
     private var isUnsafeToFreezeOverride: ((Int32, String?) -> Bool)?
@@ -279,8 +279,8 @@ public final class ActionExecutor: @unchecked Sendable {
         return failures
     }
 
-    /// Re-adopts previously frozen PIDs after relaunch. Does not resume them.
-    /// Still-running processes are SIGSTOP'd again; already-stopped ones are just tracked.
+    
+    
     public func restorePersisted(_ saved: [FrozenProcess]) -> [FrozenProcess] {
         var kept: [FrozenProcess] = []
         for item in saved {
@@ -338,14 +338,14 @@ public final class ActionExecutor: @unchecked Sendable {
         guard let originalNice = currentNice(pid: snapshot.pid) else {
             return ActionResult(ok: false, message: "读取 \(snapshot.processName) 的优先级失败：\(posixError())", action: .throttle, pid: snapshot.pid)
         }
-        // Do not take ownership of a process already backgrounded by another
-        // controller (Darwin background tasks have scheduling priority <= 4).
+        
+        
         let priority = rs_process_priority(snapshot.pid)
         guard priority > 4 else {
             return ActionResult(ok: false, message: "无法确认原调度状态，或进程已处于后台低优先级；未修改。", action: .throttle, pid: snapshot.pid)
         }
-        // Darwin background policy is reversible by the same user. Raising a
-        // POSIX nice priority again would require privileges we do not have.
+        
+        
         if setpriority(PRIO_DARWIN_PROCESS, UInt32(bitPattern: snapshot.pid), PRIO_DARWIN_BG) != 0 {
             return ActionResult(ok: false, message: "降低优先级失败：\(posixError())", action: .throttle, pid: snapshot.pid)
         }
@@ -408,8 +408,8 @@ public final class ActionExecutor: @unchecked Sendable {
     }
 
     private func quitGroup(snapshots: [ProcessSnapshot], bundleID: String?) -> ActionResult {
-        // Resolve only within the validated snapshots; never select another
-        // running instance merely because it has the same bundle identifier.
+        
+        
         let roots = snapshots.filter {
             !ProcessFamily.isCompanion(bundleID: $0.bundleID, processName: $0.processName)
         }

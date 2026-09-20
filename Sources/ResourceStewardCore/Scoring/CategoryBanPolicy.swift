@@ -1,10 +1,10 @@
 import Foundation
 
-/// User-facing categories that must not be auto-managed. Users should not need
-/// to know which bundle IDs are "safe to freeze".
-///
-/// VPN / tunnel and VM / container runtimes stay in `KeepAlivePolicy` and are
-/// composed here so those lists are not duplicated.
+
+
+
+
+
 public enum ResourceCategory: String, Sendable, Equatable, CaseIterable {
     case audioMeetingScreen
     case instantMessaging
@@ -108,7 +108,7 @@ public enum CategoryBanPolicy: Sendable {
         return allows(action, in: category)
     }
 
-    /// Level 1 never auto-acts on a banned category, including Apple user apps.
+    
     public static func bansAutoAction(bundleID: String?, processName: String, path: String = "") -> Bool {
         match(bundleID: bundleID, processName: processName, path: path) != nil
     }

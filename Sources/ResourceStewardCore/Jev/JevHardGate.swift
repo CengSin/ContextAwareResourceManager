@@ -1,7 +1,7 @@
 import Foundation
 
-/// Local hard gates always win. Consult skips prevent calling Jev.
-/// Freeze is retired: any freeze choice is clamped to throttle.
+
+
 public enum JevHardGate: Sendable {
     public struct Candidate: Sendable, Equatable {
         public var pid: Int32
@@ -74,7 +74,7 @@ public enum JevHardGate: Sendable {
         }
     }
 
-    /// Who Jev may see. Window ownership is not a consult skip.
+    
     public static func skipReason(for candidate: Candidate) -> (JevHardGateReason, String)? {
         if candidate.isForeground {
             return (.foreground, "foreground")
@@ -116,12 +116,12 @@ public enum JevHardGate: Sendable {
         return nil
     }
 
-    /// Gray-zone = consult gates passed. Windowed third-party apps can still be asked.
+    
     public static func isGrayZone(_ candidate: Candidate) -> Bool {
         skipReason(for: candidate) == nil
     }
 
-    /// `SIGSTOP` is unsafe when this candidate (or another PID in the same bundle) owns compositor windows.
+    
     public static func isUnsafeToFreeze(_ candidate: Candidate) -> Bool {
         if candidate.ownsWindows { return true }
         guard let owners = candidate.windowOwnerPIDs, candidate.pid > 0 else { return false }
@@ -148,7 +148,7 @@ public enum JevHardGate: Sendable {
         return nil
     }
 
-    /// Freeze is retired. Windowed apps may still be asked; quit is allowed.
+    
     public static func clampAction(_ action: SuggestedAction, for candidate: Candidate) -> SuggestedAction {
         _ = candidate
         return action.withoutFreeze()

@@ -113,7 +113,7 @@ public struct ScoreWeights: Codable, Sendable, Equatable {
     public var noneBelow: Double
     public var throttleBelow: Double
     public var freezeBelow: Double
-    /// Bonus when a classified workspace is active and this app is not in it.
+    
     public var offWorkspace: Double
 
     public init(

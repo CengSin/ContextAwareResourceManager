@@ -20,9 +20,9 @@ final class StewardChrome {
             notifier.requestAuthorization()
         }
 
-        // @Published emits from willSet. The wrapped properties still hold the old
-        // values in that call, so the panel must key off the published pair. Hop to
-        // the next main-queue turn so SwiftUI has the new pending state before layout.
+        
+        
+        
         coordinator.$pendingBatch
             .combineLatest(coordinator.$pendingAction)
             .receive(on: DispatchQueue.main)
@@ -128,8 +128,8 @@ final class ConfirmPanelController: NSObject, NSWindowDelegate {
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        // canJoinAllSpaces and moveToActiveSpace are mutually exclusive; mixing them
-        // trips NSWindow._validateCollectionBehavior and kills the process.
+        
+        
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.delegate = self
         let hosting = NSHostingView(rootView: ConfirmPromptView(coordinator: coordinator))

@@ -28,5 +28,6 @@ dist/
 
 # Secrets (platform agent token lives here — never publish)
 AGENTS.md
+.agents/
 .env
 .env.*

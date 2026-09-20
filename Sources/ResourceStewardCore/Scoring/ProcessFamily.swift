@@ -1,8 +1,8 @@
 import Foundation
 
-/// Chromium / Electron style apps split into a main process plus Helper / Renderer / GPU
-/// children with their own bundle IDs. Those children must not be scored or acted on
-/// independently: they inherit the parent's foreground / idle / workspace identity.
+
+
+
 public enum ProcessFamily: Sendable {
     private static let hostedCompanions: [String: String] = [
         "org.mozilla.plugincontainer": "org.mozilla.firefox",
@@ -10,8 +10,8 @@ public enum ProcessFamily: Sendable {
         "com.tencent.xinWeChat.WeChatHelper": "com.tencent.xinWeChat"
     ]
 
-    /// Sibling bundles that are not named `*.helper.*` but still belong to the parent app.
-    /// OrbStack's VM (`dev.kdrag0n.MacVirt.vmgr`) is the process that actually runs containers.
+    
+    
     private static let familyPrefixes: [(prefix: String, root: String)] = [
         ("dev.kdrag0n.MacVirt.", "dev.kdrag0n.MacVirt"),
         ("com.docker.", "com.docker.docker"),
@@ -19,7 +19,7 @@ public enum ProcessFamily: Sendable {
         ("com.tencent.flue.", "com.tencent.xinWeChat")
     ]
 
-    /// Parent bundle ID. `com.google.Chrome.helper.renderer` → `com.google.Chrome`.
+    
     public static func rootBundleID(from bundleID: String?) -> String? {
         guard let bundleID, !bundleID.isEmpty else { return bundleID }
         if let mapped = hostedCompanions[bundleID] {
@@ -64,7 +64,7 @@ public enum ProcessFamily: Sendable {
         return "pid:\(pid)"
     }
 
-    /// Keys used to look up last-foreground time so a Renderer inherits Chrome's idle.
+    
     public static func identityKeys(bundleID: String?, processName: String) -> [String] {
         var keys: [String] = []
         func append(_ value: String?) {
@@ -87,7 +87,7 @@ public enum ProcessFamily: Sendable {
         return nil
     }
 
-    /// Dock / Spotlight / Cmd-Tab opening an app should resume every frozen member of that family.
+    
     public static func matchesUserOpen(
         frozenBundleID: String,
         frozenName: String,

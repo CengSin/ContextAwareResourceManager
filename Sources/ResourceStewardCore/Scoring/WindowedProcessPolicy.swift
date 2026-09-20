@@ -2,11 +2,11 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-/// A CG window that may participate in WindowServer on-glass transactions.
-///
-/// SIGSTOP of a process that owns such a window can stall the compositor:
-/// WindowServer waits for a surface that never arrives, then userspace watchdog
-/// kills WindowServer and the GUI session restarts.
+
+
+
+
+
 public struct WindowSurface: Sendable, Equatable {
     public let ownerPID: Int32
     public let layer: Int
@@ -22,7 +22,7 @@ public struct WindowSurface: Sendable, Equatable {
         self.alpha = alpha
     }
 
-    /// Menu bar and above (layer >= 24) are not app document surfaces.
+    
     public var participatesInCompositor: Bool {
         alpha > 0.01 && width >= 2 && height >= 2 && layer < 24
     }
@@ -33,7 +33,7 @@ public enum WindowedProcessPolicy: Sendable {
         Set(windows.filter(\.participatesInCompositor).map(\.ownerPID))
     }
 
-    /// If the live window list cannot be trusted, treat regular AppKit apps as windowed.
+    
     public static func snapshotOwnsWindows(
         pid: Int32,
         isRegularApp: Bool,
@@ -47,7 +47,7 @@ public enum WindowedProcessPolicy: Sendable {
         isUnsafeToFreeze(pid: pid, bundleID: bundleID, ownerPIDs: currentOwnerPIDs())
     }
 
-    /// `ownerPIDs == nil` means the window list is missing or incomplete: fail closed.
+    
     public static func isUnsafeToFreeze(pid: Int32, bundleID: String?, ownerPIDs: Set<Int32>?) -> Bool {
         guard let ownerPIDs else { return true }
         if ownerPIDs.contains(pid) { return true }
@@ -56,7 +56,7 @@ public enum WindowedProcessPolicy: Sendable {
             .contains { ownerPIDs.contains($0.processIdentifier) }
     }
 
-    /// `nil` means the list is missing or incomplete — callers must fail closed.
+    
     public static func currentOwnerPIDs(
         frontmostPID: Int32? = nil,
         frontmostIsRegular: Bool = true

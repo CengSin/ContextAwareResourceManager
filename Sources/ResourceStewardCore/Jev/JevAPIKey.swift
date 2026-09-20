@@ -1,13 +1,13 @@
 import Foundation
 
-/// Resolves the Jev / OpenRouter API key without depending on adhoc Keychain ACLs.
-///
-/// Precedence:
-/// 1. Process environment `RESOURCE_STEWARD_JEV_API_KEY`
-/// 2. Same key in `~/Library/Application Support/ResourceSteward/env` (KEY=VALUE lines)
-/// 3. Legacy Keychain item (often lost after adhoc re-sign)
+
+
+
+
+
+
 public enum JevAPIKey {
-    /// Export this in the shell / LaunchAgent / Application Support `env` file.
+    
     public static let environmentVariable = "RESOURCE_STEWARD_JEV_API_KEY"
 
     public enum Source: String, Sendable {
@@ -56,7 +56,7 @@ public enum JevAPIKey {
         return value
     }
 
-    /// Parse `~/Library/Application Support/ResourceSteward/env` for KEY=VALUE lines.
+    
     private static func valueFromEnvFile(named key: String) -> String? {
         guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
