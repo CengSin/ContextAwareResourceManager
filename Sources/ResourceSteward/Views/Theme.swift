@@ -113,23 +113,24 @@ enum AppIconCache {
         return images[path]
     }
 
-    /// Load off the main thread. `icon(forFile:)` hits disk; doing it on MainActor
-    /// stalls the menu.
-    static func load(path: String?, bundleID: String? = nil) async -> NSImage? {
+    /// Load off the main thread into `cached(_:)`. `icon(forFile:)` hits disk;
+    /// doing it on MainActor stalls the menu. Completes with `Void` because
+    /// `NSImage` is not Sendable and cannot be returned across isolation.
+    static func load(path: String?, bundleID: String? = nil) async {
         guard let resolved = resolvePath(path: path, bundleID: bundleID), !resolved.isEmpty else {
-            return nil
+            return
         }
-        if let cached = cached(resolved) { return cached }
-        return await withCheckedContinuation { continuation in
+        if cached(resolved) != nil { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async {
-                if let cached = cached(resolved) {
-                    continuation.resume(returning: cached)
+                if cached(resolved) != nil {
+                    continuation.resume()
                     return
                 }
                 guard FileManager.default.fileExists(atPath: resolved)
                     || resolved.hasSuffix(".app")
                     || resolved.contains(".app/") else {
-                    continuation.resume(returning: nil)
+                    continuation.resume()
                     return
                 }
                 let icon = NSWorkspace.shared.icon(forFile: resolved)
@@ -137,7 +138,7 @@ enum AppIconCache {
                 lock.lock()
                 images[resolved] = icon
                 lock.unlock()
-                continuation.resume(returning: icon)
+                continuation.resume()
             }
         }
     }
@@ -184,9 +185,8 @@ struct AppIconView: View {
                 image = cached
                 return
             }
-            if let loaded = await AppIconCache.load(path: path, bundleID: bundleID) {
-                image = loaded
-            }
+            await AppIconCache.load(path: path, bundleID: bundleID)
+            image = AppIconCache.cached(resolved)
         }
     }
 
