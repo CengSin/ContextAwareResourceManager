@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Marketing version (e.g. 1.1.0). Empty uses the git tag or Info.plist."
-        required: false
+        description: "Version to publish from main (e.g. 1.1.0 creates the v1.1.0 release)."
+        required: true
         type: string
 
 concurrency:
@@ -110,8 +110,20 @@ jobs:
           generate_release_notes: true
           make_latest: true
 
+      - name: Publish manually versioned release
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.checks-and-package.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: v${{ needs.checks-and-package.outputs.version }}
+          files: dist/${{ needs.checks-and-package.outputs.zip_file }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          make_latest: true
+
       - name: Publish latest build
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
