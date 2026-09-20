@@ -11,6 +11,7 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
     public let path: String
     public let memoryFootprintMB: Double
     public let cpuPercent: Double
+    public let gpuPercent: Double
     public let isForeground: Bool
     public let isAccessory: Bool
     public let isRegularApp: Bool
@@ -22,12 +23,13 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
     public init(
         timestamp: Date = Date(),
         pid: Int32,
-        uid: UInt32,
+        uid: UInt32 = 0,
         bundleID: String?,
         processName: String,
         path: String = "",
         memoryFootprintMB: Double,
         cpuPercent: Double,
+        gpuPercent: Double = 0,
         isForeground: Bool,
         isAccessory: Bool = false,
         isRegularApp: Bool = true,
@@ -44,6 +46,7 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
         self.path = path
         self.memoryFootprintMB = memoryFootprintMB
         self.cpuPercent = cpuPercent
+        self.gpuPercent = gpuPercent
         self.isForeground = isForeground
         self.isAccessory = isAccessory
         self.isRegularApp = isRegularApp
@@ -51,6 +54,33 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
         self.idleSeconds = idleSeconds
         self.startUnix = startUnix
         self.parentPID = parentPID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case timestamp, pid, uid, bundleID, processName, path
+        case memoryFootprintMB, cpuPercent, gpuPercent
+        case isForeground, isAccessory, isRegularApp, ownsWindows
+        case idleSeconds, startUnix, parentPID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+        pid = try container.decode(Int32.self, forKey: .pid)
+        uid = try container.decodeIfPresent(UInt32.self, forKey: .uid) ?? 0
+        bundleID = try container.decodeIfPresent(String.self, forKey: .bundleID)
+        processName = try container.decode(String.self, forKey: .processName)
+        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
+        memoryFootprintMB = try container.decodeIfPresent(Double.self, forKey: .memoryFootprintMB) ?? 0
+        cpuPercent = try container.decodeIfPresent(Double.self, forKey: .cpuPercent) ?? 0
+        gpuPercent = try container.decodeIfPresent(Double.self, forKey: .gpuPercent) ?? 0
+        isForeground = try container.decodeIfPresent(Bool.self, forKey: .isForeground) ?? false
+        isAccessory = try container.decodeIfPresent(Bool.self, forKey: .isAccessory) ?? false
+        isRegularApp = try container.decodeIfPresent(Bool.self, forKey: .isRegularApp) ?? true
+        ownsWindows = try container.decodeIfPresent(Bool.self, forKey: .ownsWindows) ?? false
+        idleSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .idleSeconds) ?? 0
+        startUnix = try container.decodeIfPresent(TimeInterval.self, forKey: .startUnix) ?? 0
+        parentPID = try container.decodeIfPresent(Int32.self, forKey: .parentPID) ?? 0
     }
 
     public var generation: ProcessGeneration {
@@ -66,7 +96,6 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
         return processName
     }
 
-    
     public static func == (lhs: ProcessSnapshot, rhs: ProcessSnapshot) -> Bool {
         lhs.pid == rhs.pid
             && lhs.uid == rhs.uid
@@ -75,6 +104,7 @@ public struct ProcessSnapshot: Codable, Sendable, Equatable, Identifiable {
             && lhs.path == rhs.path
             && abs(lhs.memoryFootprintMB - rhs.memoryFootprintMB) < 0.5
             && abs(lhs.cpuPercent - rhs.cpuPercent) < 0.5
+            && abs(lhs.gpuPercent - rhs.gpuPercent) < 0.5
             && lhs.isForeground == rhs.isForeground
             && lhs.isAccessory == rhs.isAccessory
             && lhs.isRegularApp == rhs.isRegularApp

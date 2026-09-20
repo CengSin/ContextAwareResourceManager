@@ -74,6 +74,15 @@ int rs_host_cpu_ticks(RSHostCPUTicks *out);
 /// Reads GPU occupancy from IOAccelerator. Returns 0 on success.
 int rs_host_gpu(RSHostGPU *out);
 
+typedef struct {
+    int32_t pid;
+    uint64_t gpu_time_ns;
+} RSProcessGPUSample;
+
+/// Samples per-process accumulated GPU times from IOAccelerator user clients.
+/// Returns number of entries written to out, or -1 on failure.
+int rs_sample_process_gpu_times(RSProcessGPUSample *out, int max_count);
+
 #ifdef __cplusplus
 }
 #endif

@@ -15,6 +15,7 @@ public final class SystemMonitor: @unchecked Sendable {
     
     public private(set) var gpuHardwareSampleCount = 0
     private var previousProcessCPU: [Int32: (timeNs: UInt64, sampledAt: Date)] = [:]
+    private var previousProcessGPU: [Int32: (timeNs: UInt64, sampledAt: Date)] = [:]
 
     public init() {}
 
@@ -152,6 +153,37 @@ public final class SystemMonitor: @unchecked Sendable {
     public func pruneProcessCPU(livePIDs: Set<Int32>) {
         lock.lock()
         previousProcessCPU = previousProcessCPU.filter { livePIDs.contains($0.key) }
+        lock.unlock()
+    }
+
+    public func sampleProcessGPUTimes(maxCount: Int = 512) -> [Int32: UInt64] {
+        var buffer = Array(repeating: RSProcessGPUSample(), count: maxCount)
+        let count = buffer.withUnsafeMutableBufferPointer { ptr in
+            rs_sample_process_gpu_times(ptr.baseAddress, Int32(maxCount))
+        }
+        guard count > 0 else { return [:] }
+        var result: [Int32: UInt64] = [:]
+        for sample in buffer.prefix(Int(count)) {
+            result[sample.pid] = sample.gpu_time_ns
+        }
+        return result
+    }
+
+    public func gpuPercent(pid: Int32, gpuTimeNs: UInt64, now: Date) -> Double {
+        lock.lock()
+        let previous = previousProcessGPU[pid]
+        previousProcessGPU[pid] = (gpuTimeNs, now)
+        lock.unlock()
+        guard let previous else { return 0 }
+        let dt = now.timeIntervalSince(previous.sampledAt)
+        guard dt > 0.2, gpuTimeNs >= previous.timeNs else { return 0 }
+        let dGPU = Double(gpuTimeNs - previous.timeNs) / 1_000_000_000.0
+        return max(0, min(100, (dGPU / dt) * 100))
+    }
+
+    public func pruneProcessGPU(livePIDs: Set<Int32>) {
+        lock.lock()
+        previousProcessGPU = previousProcessGPU.filter { livePIDs.contains($0.key) }
         lock.unlock()
     }
 

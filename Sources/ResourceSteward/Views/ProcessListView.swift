@@ -5,6 +5,8 @@ struct ProcessListView: View {
     @EnvironmentObject private var coordinator: AppCoordinator
     @State private var expandedID: String?
     @State private var query = ""
+    @State private var sortField: ProcessSortField = .score
+    @State private var sortOrder: ProcessSortOrder = .descending
 
     var body: some View {
         VStack(spacing: 8) {
@@ -75,6 +77,63 @@ struct ProcessListView: View {
             }
             .padding(.horizontal, 14)
 
+            HStack(spacing: 6) {
+                Text("排序:")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                ForEach(ProcessSortField.allCases) { field in
+                    Button {
+                        if sortField == field {
+                            sortOrder = sortOrder == .descending ? .ascending : .descending
+                        } else {
+                            sortField = field
+                            sortOrder = .descending
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(field.title)
+                                .font(.system(size: 10, weight: sortField == field ? .semibold : .regular))
+                            if sortField == field {
+                                Image(systemName: sortOrder.arrowSymbol)
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            sortField == field
+                                ? Color.accentColor.opacity(0.18)
+                                : Color.primary.opacity(0.04),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        )
+                        .foregroundStyle(sortField == field ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(field.title) 排序")
+                }
+
+                Spacer()
+
+                Button {
+                    sortOrder = sortOrder == .descending ? .ascending : .descending
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: sortOrder.arrowSymbol)
+                            .font(.system(size: 8, weight: .bold))
+                        Text(sortOrder.title)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("切换排序顺序，当前\(sortOrder.title)")
+            }
+            .padding(.horizontal, 14)
+
             
             if displayedGroups.isEmpty {
                 VStack(spacing: 10) {
@@ -118,15 +177,20 @@ struct ProcessListView: View {
     private var displayedGroups: [ProcessGroupViewModel] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let source = needle.isEmpty ? coordinator.visibleGroups : coordinator.processGroups
-        guard !needle.isEmpty else { return source }
-        return source.filter { group in
-            group.displayName.lowercased().contains(needle)
-                || group.key.lowercased().contains(needle)
-                || group.members.contains { member in
-                    member.snapshot.processName.lowercased().contains(needle)
-                        || (member.snapshot.bundleID?.lowercased().contains(needle) ?? false)
-                }
+        let filtered: [ProcessGroupViewModel]
+        if needle.isEmpty {
+            filtered = source
+        } else {
+            filtered = source.filter { group in
+                group.displayName.lowercased().contains(needle)
+                    || group.key.lowercased().contains(needle)
+                    || group.members.contains { member in
+                        member.snapshot.processName.lowercased().contains(needle)
+                            || (member.snapshot.bundleID?.lowercased().contains(needle) ?? false)
+                    }
+            }
         }
+        return AppCoordinator.sort(groups: filtered, by: sortField, order: sortOrder)
     }
 
     private var emptyListText: String {
@@ -257,6 +321,15 @@ private struct ProcessGroupRow: View, Equatable {
                             .foregroundStyle(.tertiary)
 
                         Text("CPU \(Int(group.cpuPercent))%")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+
+                        Text("·")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.tertiary)
+
+                        Text("GPU \(Int(group.gpuPercent))%")
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                             .monospacedDigit()

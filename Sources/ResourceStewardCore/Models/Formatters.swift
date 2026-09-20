@@ -109,6 +109,10 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
         members.reduce(0) { $0 + $1.snapshot.cpuPercent }
     }
 
+    public var gpuPercent: Double {
+        members.reduce(0) { $0 + $1.snapshot.gpuPercent }
+    }
+
     public var idleSeconds: TimeInterval {
         members.map(\.snapshot.idleSeconds).min() ?? primary.snapshot.idleSeconds
     }
@@ -183,5 +187,44 @@ public struct RunningAppInfo: Identifiable, Hashable, Sendable {
         self.name = name
         self.path = path
         self.isBackground = isBackground
+    }
+}
+
+public enum ProcessSortField: String, CaseIterable, Identifiable, Sendable {
+    case score = "默认"
+    case cpu = "CPU"
+    case gpu = "GPU"
+    case memory = "内存"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .score: return "默认"
+        case .cpu: return "CPU"
+        case .gpu: return "GPU"
+        case .memory: return "内存"
+        }
+    }
+}
+
+public enum ProcessSortOrder: String, CaseIterable, Identifiable, Sendable {
+    case descending = "降序"
+    case ascending = "升序"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .descending: return "降序"
+        case .ascending: return "升序"
+        }
+    }
+
+    public var arrowSymbol: String {
+        switch self {
+        case .descending: return "arrow.down"
+        case .ascending: return "arrow.up"
+        }
     }
 }

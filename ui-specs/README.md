@@ -57,8 +57,8 @@ flowchart TD
 ## 进程治理面板
 - 用户称呼：进程 Tab、进程列表、应用治理面板、Process List
 - 入口：主面板底部导航栏 → 点击第 1 个 Tab “进程”（默认选中项）
-- 关键选择器：`button "进程" of window 1`；搜索框: `text field 1` (Placeholder=`"搜索应用或进程..."`)；开关: `checkbox "只看建议"` (AXRole=`AXCheckBox`)；操作按钮: `button "降优先级"`, `button "退出"`, `button "恢复优先级"`, `button "恢复"`；行内评分胶囊: `AXStaticText` (0-100)；折叠展开触发: 行单击事件；次级动作: `button "设为常用"` / `button "取消常用"`, `button "不再建议"`
-- 子功能：运行中应用与进程实时列表浏览、应用名/PID/Bundle ID 模糊搜索、“只看建议”一键过滤白名单与前台、进程族与 Helper 自动并组、展开查看多维度评分明细与进程拓扑树、降低/恢复调度优先级（nice/taskpolicy）、请求应用优雅退出、常用加白与加入黑名单
+- 关键选择器：`button "进程" of window 1`；搜索框: `text field 1` (Placeholder=`"搜索应用或进程..."`)；开关: `checkbox "只看建议"` (AXRole=`AXCheckBox`)；排序维度按钮: `button "默认 排序"`, `button "CPU 排序"`, `button "GPU 排序"`, `button "内存 排序"`；排序顺序切换: `button "切换排序顺序，当前降序"` / `button "切换排序顺序，当前升序"`；操作按钮: `button "降优先级"`, `button "退出"`, `button "恢复优先级"`, `button "恢复"`；行内评分胶囊: `AXStaticText` (0-100)；折叠展开触发: 行单击事件；次级动作: `button "设为常用"` / `button "取消常用"`, `button "不再建议"`
+- 子功能：运行中应用与进程实时列表浏览、应用名/PID/Bundle ID 模糊搜索、“只看建议”一键过滤白名单与前台、多维度排序（默认综合评分、CPU占用率、GPU占用率、内存占用率，支持升序/降序切换）、进程族与 Helper 自动并组、展开查看多维度评分明细与进程拓扑树、降低/恢复调度优先级（nice/taskpolicy）、请求应用优雅退出、常用加白与加入黑名单
 - 前置条件：系统有正在运行的用户级进程；SystemMonitor 周期性更新正常
 - 常见故障现象：列表显示“当前没有建议降级或退出的应用” → 开启了“只看建议”，当前运行应用全部处于前台或常用保护中，关掉开关即可查看全量；操作按钮置灰不可点击 → 该应用当前处于前台活跃状态
 

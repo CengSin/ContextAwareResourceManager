@@ -528,10 +528,16 @@ enum StewardChecks {
             !ProcessFamily.isIndependentCompanionAction(snapshots: [chromeMainSnap, chromeRendererSnap])
         )
 
-        func stubGroup(name: String, bundle: String, pid: Int32, memory: Double, score: Double, foreground: Bool = false) -> ProcessGroupViewModel {
+        func stubGroup(
+            name: String, bundle: String, pid: Int32,
+            memory: Double, score: Double,
+            cpu: Double = 0, gpu: Double = 0,
+            foreground: Bool = false
+        ) -> ProcessGroupViewModel {
             let snapshot = ProcessSnapshot(
                 pid: pid, uid: 501, bundleID: bundle, processName: name,
-                memoryFootprintMB: memory, cpuPercent: 0, isForeground: foreground, idleSeconds: 60
+                memoryFootprintMB: memory, cpuPercent: cpu, gpuPercent: gpu,
+                isForeground: foreground, idleSeconds: 60
             )
             let record = ReclaimScoreRecord(
                 pid: pid, bundleID: bundle, processName: name, score: score,
@@ -559,6 +565,33 @@ enum StewardChecks {
             "listed keeps heavy chrome at score 0",
             AppCoordinator.listed(memoryCrowd, limit: 80).contains(where: { $0.key == "com.google.Chrome" })
         )
+
+        let gA = stubGroup(name: "AppA", bundle: "com.test.a", pid: 101, memory: 500, score: 30, cpu: 10, gpu: 50)
+        let gB = stubGroup(name: "AppB", bundle: "com.test.b", pid: 102, memory: 1200, score: 80, cpu: 75, gpu: 10)
+        let gC = stubGroup(name: "AppC", bundle: "com.test.c", pid: 103, memory: 200, score: 50, cpu: 30, gpu: 90)
+
+        let cpuDesc = AppCoordinator.sort(groups: [gA, gB, gC], by: .cpu, order: .descending)
+        check("sort by cpu descending", cpuDesc.map(\.displayName) == ["AppB", "AppC", "AppA"])
+        let cpuAsc = AppCoordinator.sort(groups: [gA, gB, gC], by: .cpu, order: .ascending)
+        check("sort by cpu ascending", cpuAsc.map(\.displayName) == ["AppA", "AppC", "AppB"])
+
+        let gpuDesc = AppCoordinator.sort(groups: [gA, gB, gC], by: .gpu, order: .descending)
+        check("sort by gpu descending", gpuDesc.map(\.displayName) == ["AppC", "AppA", "AppB"])
+        let gpuAsc = AppCoordinator.sort(groups: [gA, gB, gC], by: .gpu, order: .ascending)
+        check("sort by gpu ascending", gpuAsc.map(\.displayName) == ["AppB", "AppA", "AppC"])
+
+        let memDesc = AppCoordinator.sort(groups: [gA, gB, gC], by: .memory, order: .descending)
+        check("sort by memory descending", memDesc.map(\.displayName) == ["AppB", "AppA", "AppC"])
+        let memAsc = AppCoordinator.sort(groups: [gA, gB, gC], by: .memory, order: .ascending)
+        check("sort by memory ascending", memAsc.map(\.displayName) == ["AppC", "AppA", "AppB"])
+
+        let scoreDesc = AppCoordinator.sort(groups: [gA, gB, gC], by: .score, order: .descending)
+        check("sort by score descending", scoreDesc.map(\.displayName) == ["AppB", "AppC", "AppA"])
+        let scoreAsc = AppCoordinator.sort(groups: [gA, gB, gC], by: .score, order: .ascending)
+        check("sort by score ascending", scoreAsc.map(\.displayName) == ["AppA", "AppC", "AppB"])
+
+        let procGPUSamples = SystemMonitor().sampleProcessGPUTimes()
+        check("process gpu times sample executes safely", procGPUSamples.count >= 0)
 
         let estimated = ReclaimScorer.estimatedReleaseMB(from: [
             ReclaimScoreRecord(

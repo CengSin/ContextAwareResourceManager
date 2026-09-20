@@ -282,3 +282,85 @@ int rs_host_gpu(RSHostGPU *out) {
     IOObjectRelease(iterator);
     return found ? 0 : -1;
 }
+
+static void rs_traverse_gpu_entry(io_registry_entry_t entry, RSProcessGPUSample *samples, int *count, int max_count, int depth) {
+    if (depth > 6) {
+        return;
+    }
+    CFMutableDictionaryRef props = NULL;
+    if (IORegistryEntryCreateCFProperties(entry, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS && props != NULL) {
+        CFStringRef creator = (CFStringRef)CFDictionaryGetValue(props, CFSTR("IOUserClientCreator"));
+        CFNumberRef time_val = (CFNumberRef)CFDictionaryGetValue(props, CFSTR("accumulatedGPUTime"));
+        if (time_val == NULL) {
+            CFArrayRef app_usage = (CFArrayRef)CFDictionaryGetValue(props, CFSTR("AppUsage"));
+            if (app_usage != NULL && CFGetTypeID(app_usage) == CFArrayGetTypeID()) {
+                CFIndex arr_count = CFArrayGetCount(app_usage);
+                for (CFIndex j = 0; j < arr_count; j++) {
+                    CFDictionaryRef usage_dict = (CFDictionaryRef)CFArrayGetValueAtIndex(app_usage, j);
+                    if (usage_dict != NULL && CFGetTypeID(usage_dict) == CFDictionaryGetTypeID()) {
+                        CFNumberRef nested_time = (CFNumberRef)CFDictionaryGetValue(usage_dict, CFSTR("accumulatedGPUTime"));
+                        if (nested_time != NULL && CFGetTypeID(nested_time) == CFNumberGetTypeID()) {
+                            time_val = nested_time;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (creator != NULL && time_val != NULL &&
+            CFGetTypeID(creator) == CFStringGetTypeID() &&
+            CFGetTypeID(time_val) == CFNumberGetTypeID()) {
+            char buf[128];
+            if (CFStringGetCString(creator, buf, sizeof(buf), kCFStringEncodingUTF8)) {
+                if (strncmp(buf, "pid ", 4) == 0) {
+                    int32_t pid = (int32_t)atoi(buf + 4);
+                    uint64_t ns = 0;
+                    if (pid > 0 && CFNumberGetValue(time_val, kCFNumberSInt64Type, &ns)) {
+                        int found = 0;
+                        for (int i = 0; i < *count; i++) {
+                            if (samples[i].pid == pid) {
+                                samples[i].gpu_time_ns += ns;
+                                found = 1;
+                                break;
+                            }
+                        }
+                        if (!found && *count < max_count) {
+                            samples[*count].pid = pid;
+                            samples[*count].gpu_time_ns = ns;
+                            (*count)++;
+                        }
+                    }
+                }
+            }
+        }
+        CFRelease(props);
+    }
+
+    io_iterator_t child_iter = IO_OBJECT_NULL;
+    if (IORegistryEntryGetChildIterator(entry, kIOServicePlane, &child_iter) == KERN_SUCCESS) {
+        io_registry_entry_t child = IO_OBJECT_NULL;
+        while ((child = IOIteratorNext(child_iter)) != IO_OBJECT_NULL) {
+            rs_traverse_gpu_entry(child, samples, count, max_count, depth + 1);
+            IOObjectRelease(child);
+        }
+        IOObjectRelease(child_iter);
+    }
+}
+
+int rs_sample_process_gpu_times(RSProcessGPUSample *out, int max_count) {
+    if (out == NULL || max_count <= 0) {
+        return -1;
+    }
+    io_iterator_t iterator = IO_OBJECT_NULL;
+    if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iterator) != KERN_SUCCESS) {
+        return -1;
+    }
+    int count = 0;
+    io_registry_entry_t entry = IO_OBJECT_NULL;
+    while ((entry = IOIteratorNext(iterator)) != IO_OBJECT_NULL) {
+        rs_traverse_gpu_entry(entry, out, &count, max_count, 0);
+        IOObjectRelease(entry);
+    }
+    IOObjectRelease(iterator);
+    return count;
+}

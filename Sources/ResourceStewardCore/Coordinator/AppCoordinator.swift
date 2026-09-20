@@ -174,6 +174,7 @@ public final class AppCoordinator: ObservableObject {
         let cpu = monitor.sampleCPU()
         let gpu = monitor.sampleGPU()
         let raw = monitor.sampleProcesses()
+        let gpuTimes = monitor.sampleProcessGPUTimes()
         let now = Date()
         let windowOwnerPIDs = WindowedProcessPolicy.currentOwnerPIDs(
             frontmostPID: frontmostPID,
@@ -206,6 +207,7 @@ public final class AppCoordinator: ObservableObject {
                     path: path,
                     memoryFootprintMB: sample.memoryFootprintMB,
                     cpuPercent: monitor.cpuPercent(pid: sample.pid, cpuTimeNs: sample.cpuTimeNs, now: now),
+                    gpuPercent: monitor.gpuPercent(pid: sample.pid, gpuTimeNs: gpuTimes[sample.pid] ?? 0, now: now),
                     isForeground: collector.isForeground(bundleID: bundleID, processName: name),
                     isAccessory: isAccessory,
                     isRegularApp: isRegularApp,
@@ -226,6 +228,7 @@ public final class AppCoordinator: ObservableObject {
             )
         }
         monitor.pruneProcessCPU(livePIDs: livePIDs)
+        monitor.pruneProcessGPU(livePIDs: livePIDs)
 
         let records = ReclaimScorer.scoreAll(
             snapshots: snapshots,
@@ -574,6 +577,54 @@ public final class AppCoordinator: ObservableObject {
             return lhs.score.score > rhs.score.score
         }
         return lhs.totalMemoryMB > rhs.totalMemoryMB
+    }
+
+    nonisolated public static func sort(
+        groups: [ProcessGroupViewModel],
+        by field: ProcessSortField,
+        order: ProcessSortOrder
+    ) -> [ProcessGroupViewModel] {
+        switch field {
+        case .score:
+            let sorted = groups.sorted(by: Self.displayOrder)
+            return order == .descending ? sorted : sorted.reversed()
+        case .cpu:
+            return groups.sorted { lhs, rhs in
+                if abs(lhs.cpuPercent - rhs.cpuPercent) > 0.01 {
+                    return order == .descending
+                        ? lhs.cpuPercent > rhs.cpuPercent
+                        : lhs.cpuPercent < rhs.cpuPercent
+                }
+                if abs(lhs.totalMemoryMB - rhs.totalMemoryMB) > 0.1 {
+                    return lhs.totalMemoryMB > rhs.totalMemoryMB
+                }
+                return lhs.score.score > rhs.score.score
+            }
+        case .gpu:
+            return groups.sorted { lhs, rhs in
+                if abs(lhs.gpuPercent - rhs.gpuPercent) > 0.01 {
+                    return order == .descending
+                        ? lhs.gpuPercent > rhs.gpuPercent
+                        : lhs.gpuPercent < rhs.gpuPercent
+                }
+                if abs(lhs.cpuPercent - rhs.cpuPercent) > 0.01 {
+                    return lhs.cpuPercent > rhs.cpuPercent
+                }
+                return lhs.totalMemoryMB > rhs.totalMemoryMB
+            }
+        case .memory:
+            return groups.sorted { lhs, rhs in
+                if abs(lhs.totalMemoryMB - rhs.totalMemoryMB) > 0.1 {
+                    return order == .descending
+                        ? lhs.totalMemoryMB > rhs.totalMemoryMB
+                        : lhs.totalMemoryMB < rhs.totalMemoryMB
+                }
+                if abs(lhs.cpuPercent - rhs.cpuPercent) > 0.01 {
+                    return lhs.cpuPercent > rhs.cpuPercent
+                }
+                return lhs.score.score > rhs.score.score
+            }
+        }
     }
 
     public func resetWeights() {
