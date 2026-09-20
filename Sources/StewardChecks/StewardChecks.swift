@@ -857,33 +857,61 @@ enum StewardChecks {
         let originalNice = getpriority(PRIO_PROCESS, UInt32(bitPattern: throttlePID))
         let throttleExecutor = ActionExecutor()
         throttleExecutor.isUnsafeToFreeze = { _, _ in false }
-        let throttleResult = throttleExecutor.execute(
-            action: .throttle,
-            snapshot: ProcessSnapshot(
-                pid: throttlePID,
-                uid: UInt32(getuid()),
-                bundleID: nil,
-                processName: "sleep",
-                memoryFootprintMB: 1,
-                cpuPercent: 0,
-                isForeground: false,
-                idleSeconds: 120
-            )
+        let throttleSnapshot = ProcessSnapshot(
+            pid: throttlePID, uid: UInt32(getuid()), bundleID: nil, processName: "sleep",
+            memoryFootprintMB: 1, cpuPercent: 0, isForeground: false, idleSeconds: 120,
+            startUnix: SystemMonitor.processGeneration(pid: throttlePID)!.startUnix
         )
+        func schedulingPriority() throws -> String {
+            let ps = Process()
+            ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+            ps.arguments = ["-p", String(throttlePID), "-o", "pri="]
+            let pipe = Pipe()
+            ps.standardOutput = pipe
+            try ps.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            ps.waitUntilExit()
+            return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let beforePriority = try schedulingPriority()
+        throttleExecutor.currentForeground = { (throttlePID, nil) }
+        let refusedForeground = throttleExecutor.execute(action: .throttle, snapshot: throttleSnapshot)
+        check("fresh foreground check rejects old background snapshot", !refusedForeground.ok)
+        let foregroundPriority = try schedulingPriority()
+        check("foreground rejection leaves scheduling unchanged", foregroundPriority == beforePriority)
+        throttleExecutor.currentForeground = { (0, nil) }
+        let throttleResult = throttleExecutor.execute(action: .throttle, snapshot: throttleSnapshot)
         check("throttle sleep succeeds", throttleResult.ok && throttleExecutor.isThrottled(pid: throttlePID))
+        let backgroundPriority = try schedulingPriority()
+        check("background policy lowers kernel scheduling priority", backgroundPriority != beforePriority)
+        check("throttle preserves POSIX nice", getpriority(PRIO_PROCESS, UInt32(bitPattern: throttlePID)) == originalNice)
         check("throttle ledger keeps original nice", throttleExecutor.originalNice(pid: throttlePID) == originalNice)
         let unthrottleResult = throttleExecutor.unthrottle(pid: throttlePID)
-        errno = 0
-        let restoredNice = getpriority(PRIO_PROCESS, UInt32(bitPattern: throttlePID))
-        if unthrottleResult.ok {
-            check("unthrottle restores original nice", restoredNice == originalNice && !throttleExecutor.isThrottled(pid: throttlePID))
-        } else {
-            check(
-                "unthrottle keeps ledger when kernel refuses to raise nice",
-                throttleExecutor.isThrottled(pid: throttlePID)
-                    && throttleExecutor.originalNice(pid: throttlePID) == originalNice
-            )
-        }
+        check("unthrottle succeeds without elevated privileges", unthrottleResult.ok && !throttleExecutor.isThrottled(pid: throttlePID))
+        let restoredPriority = try schedulingPriority()
+        check("unthrottle restores kernel scheduling priority", restoredPriority == beforePriority)
+        check("unthrottle preserves original nice", getpriority(PRIO_PROCESS, UInt32(bitPattern: throttlePID)) == originalNice)
+        _ = setpriority(PRIO_DARWIN_PROCESS, UInt32(bitPattern: throttlePID), PRIO_DARWIN_BG)
+        check("does not adopt another controller's background policy", !throttleExecutor.execute(action: .throttle, snapshot: throttleSnapshot).ok && !throttleExecutor.isThrottled(pid: throttlePID))
+        _ = throttleExecutor.thawAll()
+        let untouchedPriority = try schedulingPriority()
+        check("shutdown leaves unowned background policy untouched", untouchedPriority == backgroundPriority)
+        _ = setpriority(PRIO_DARWIN_PROCESS, UInt32(bitPattern: throttlePID), 0)
+        _ = throttleExecutor.execute(action: .throttle, snapshot: throttleSnapshot)
+        let shutdownFailures = throttleExecutor.thawAll()
+        let shutdownPriority = try schedulingPriority()
+        check("shutdown restores owned background policy", shutdownFailures.isEmpty && shutdownPriority == beforePriority && !throttleExecutor.isThrottled(pid: throttlePID))
+        var retry = ActionAttemptCooldown()
+        let attemptedAt = Date(timeIntervalSince1970: 100)
+        check("initial recommendation can execute", retry.allows("same-app:quit", at: attemptedAt))
+        retry.record("same-app:quit", at: attemptedAt)
+        check("failed or declined action waits through cooldown", !retry.allows("same-app:quit", at: attemptedAt.addingTimeInterval(89)))
+        check("unchanged recommendation can retry after cooldown", retry.allows("same-app:quit", at: attemptedAt.addingTimeInterval(90)))
+        retry.record("same-app:quit", at: attemptedAt.addingTimeInterval(90))
+        check("retry restarts bounded cooldown", !retry.allows("same-app:quit", at: attemptedAt.addingTimeInterval(91)))
+        throttleExecutor.lookupGeneration = { pid in ProcessGeneration(pid: pid, startUnix: 1) }
+        check("reused PID rejects throttle", !throttleExecutor.execute(action: .throttle, snapshot: throttleSnapshot).ok)
+        check("reused PID rejects quit", !throttleExecutor.execute(action: .quit, snapshot: throttleSnapshot).ok)
         throttleSleep.terminate()
         throttleSleep.waitUntilExit()
 

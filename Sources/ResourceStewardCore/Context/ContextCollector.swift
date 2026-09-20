@@ -79,6 +79,9 @@ public final class ContextCollector: @unchecked Sendable {
     }
 
     private func record(bundleID: String?, name: String?) {
+        // Opening our confirmation panel must not invalidate its own decision
+        // or make the user's last working app look newly idle.
+        if let bundleID, bundleID == Bundle.main.bundleIdentifier { return }
         let resolvedName = name ?? "unknown"
         let now = Date()
         lock.lock()

@@ -36,10 +36,9 @@ public final class AppCoordinator: ObservableObject {
     private var refreshQueued = false
     private var lastPersistAt = Date.distantPast
     private var lastPruneAt = Date.distantPast
-    private var lastDwellActionAt: [String: Date] = [:]
+    private var actionCooldown = ActionAttemptCooldown()
     private var lastPersistedFrozenSignature: Set<String> = []
     private var dismissedBatchSignature = ""
-    private var lastAutoAppliedSignature = ""
 
     public init(store: LocalStore) {
         self.store = store
@@ -82,7 +81,15 @@ public final class AppCoordinator: ObservableObject {
     }
 
     public func stop() {
-        executor.thawAll()
+        jevAdvisor.invalidateBatch()
+        let failures = executor.thawAll()
+        if !failures.isEmpty {
+            lastMessage = failures.map(\.message).joined(separator: "；")
+            lastMessageIsError = true
+            JevLog.error("shutdown_restore_failed count=\(failures.count)")
+        }
+        pendingBatch = nil
+        pendingAction = nil
         frozen = []
         lastPersistedFrozenSignature = []
         try? store.replaceFrozen([])
@@ -263,6 +270,7 @@ public final class AppCoordinator: ObservableObject {
     }
 
     private func applyTick(_ tick: SampledTick) {
+        guard isRunning else { refreshInFlight = false; return }
         executor.windowOwnerPIDs = tick.windowOwnerPIDs
         executor.reuseWindowOwnerPIDs = true
         defer { executor.reuseWindowOwnerPIDs = false }
@@ -286,7 +294,7 @@ public final class AppCoordinator: ObservableObject {
             favorites: settings.favoriteBundleIDs,
             windowOwnerPIDs: tick.windowOwnerPIDs
         )
-        let batch = resolvedBatch(jevAdvisor.syncBatch(load: load, apps: grayApps))
+        let batch = jevAdvisor.syncBatch(load: load, apps: grayApps)
         var grouped = overlayBatchActions(groups: tick.groups, actions: batch.actions)
 
         hostMemory = tick.host
@@ -369,6 +377,7 @@ public final class AppCoordinator: ObservableObject {
     public func confirmPending() {
         guard let pending = pendingAction else { return }
         pendingAction = nil
+        executor.extraKeepAliveBundleIDs = settings.favoriteBundleIDs
         let result = executor.execute(
             action: pending.action,
             snapshots: pending.group.members.map(\.snapshot),
@@ -404,15 +413,19 @@ public final class AppCoordinator: ObservableObject {
     public func confirmPendingBatch() {
         guard let batch = pendingBatch else { return }
         pendingBatch = nil
-        lastAutoAppliedSignature = batch.id
+        guard jevAdvisor.isActive else { return }
+        let live = jevAdvisor.latestBatch()
+        let current = actionableItems(from: processGroups, actions: live.actions)
+        let approved = Set(batch.items.map(decisionIdentity))
         var okCount = 0
-        for item in batch.items {
+        executor.extraKeepAliveBundleIDs = settings.favoriteBundleIDs
+        for item in current where approved.contains(decisionIdentity(item)) {
             let result = executor.execute(
                 action: item.action,
                 snapshots: item.group.members.map(\.snapshot),
                 groupBundleID: item.group.key.hasPrefix("pid:") ? item.group.primary.snapshot.bundleID : item.group.key
             )
-            lastDwellActionAt[item.group.key] = Date()
+            actionCooldown.record(item.group.key, at: Date())
             if result.ok {
                 okCount += 1
                 try? store.insertFeedback(
@@ -647,9 +660,10 @@ public final class AppCoordinator: ObservableObject {
 
     private func handleActivation(_ activation: AppActivation) {
         try? store.insertActivation(activation)
-        if thawOnUserOpen(bundleID: activation.bundleID, processName: activation.processName) > 0 {
-            refresh()
-        }
+        jevAdvisor.invalidateBatch()
+        pendingBatch = nil
+        _ = thawOnUserOpen(bundleID: activation.bundleID, processName: activation.processName)
+        refresh()
     }
 
     /// Dock, Spotlight, or Cmd-Tab of a frozen app is an explicit "I need this now".
@@ -717,41 +731,15 @@ public final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func resolvedBatch(_ live: JevBatchSnapshot) -> JevBatchSnapshot {
-        if !live.actions.isEmpty {
-            return live
-        }
-        let latest = jevAdvisor.latestBatch()
-        if !latest.actions.isEmpty {
-            return latest
-        }
-        return live
-    }
-
     private func applyResolvedBatch() {
         guard isRunning else { return }
-        let batch = resolvedBatch(jevAdvisor.latestBatch())
-        var grouped = overlayBatchActions(groups: processGroups, actions: batch.actions)
-        applyBatchDecisions(groups: grouped, batch: batch, now: Date())
-        grouped = grouped.map { group in
-            ProcessGroupViewModel(
-                key: group.key,
-                members: group.members.map { model in
-                    ProcessViewModel(
-                        snapshot: model.snapshot,
-                        score: model.score,
-                        appPath: model.appPath,
-                        appliedAction: executor.appliedAction(pid: model.snapshot.pid)
-                    )
-                }
-            )
-        }
-        grouped = Self.listed(grouped)
-        if processGroups != grouped {
-            processGroups = grouped
-            processes = grouped.flatMap(\.members)
-        }
-        autoStatusText = batchStatusText(batch: batch)
+        // Resample load, foreground and generations before consuming a response.
+        refresh()
+    }
+
+    private func decisionIdentity(_ item: PendingDecisionItem) -> String {
+        let generations = item.group.members.map { "\($0.snapshot.pid):\($0.snapshot.startUnix)" }.sorted().joined(separator: ",")
+        return "\(item.group.key):\(item.action.rawValue):\(generations)"
     }
 
     private func applyBatchDecisions(
@@ -759,18 +747,21 @@ public final class AppCoordinator: ObservableObject {
         batch: JevBatchSnapshot,
         now: Date
     ) {
-        guard jevAdvisor.isActive else { return }
+        guard jevAdvisor.isActive, !batch.pending else {
+            pendingBatch = nil
+            return
+        }
         let items = actionableItems(from: groups, actions: batch.actions)
-        guard !items.isEmpty else { return }
-        let signature = items.map { "\($0.group.key):\($0.action.rawValue)" }.sorted().joined(separator: "|")
+        guard !items.isEmpty else { pendingBatch = nil; return }
+        let signature = items.map(decisionIdentity).sorted().joined(separator: "|")
         if settings.authorizationLevel == .sceneSwitch {
             if pendingBatch != nil {
                 pendingBatch = nil
             }
             if pendingAction == nil {
-                executeAutoItems(items, signature: signature, now: now)
+                executeAutoItems(items, now: now)
             }
-        } else if pendingBatch == nil, pendingAction == nil, signature != dismissedBatchSignature {
+        } else if pendingAction == nil, signature != dismissedBatchSignature, pendingBatch?.id != signature {
             pendingBatch = PendingDecisionBatch(id: signature, items: items)
             JevLog.info(
                 "confirm_pending_set items=\(items.map { "\($0.group.key)=\($0.action.rawValue)" }.joined(separator: ","))"
@@ -788,13 +779,13 @@ public final class AppCoordinator: ObservableObject {
             let root = ProcessFamily.rootBundleID(from: bundle) ?? bundle
             let action = (actions[bundle] ?? actions[root] ?? .none).withoutFreeze()
             guard action.isActable else { continue }
-            if action == .throttle, group.appliedAction == .throttle { continue }
+            let candidate = JevHardGate.Candidate(group: group, favorites: settings.favoriteBundleIDs)
+            guard JevHardGate.isGrayZone(candidate) else { continue }
+            if action == .throttle, group.members.allSatisfy({ $0.appliedAction == .throttle }) { continue }
             if settings.authorizationLevel == .sceneSwitch, action == .quit, group.idleSeconds < 30 {
                 continue
             }
-            if let last = lastDwellActionAt[group.key], Date().timeIntervalSince(last) < 90 {
-                continue
-            }
+            guard actionCooldown.allows(group.key, at: Date()) else { continue }
             items.append(PendingDecisionItem(group: group, action: action))
             if items.count >= 6 { break }
         }
@@ -803,10 +794,8 @@ public final class AppCoordinator: ObservableObject {
 
     private func executeAutoItems(
         _ items: [PendingDecisionItem],
-        signature: String,
         now: Date
     ) {
-        if signature == lastAutoAppliedSignature { return }
         var throttleCount = 0
         var quitCount = 0
         var names: [String] = []
@@ -816,7 +805,7 @@ public final class AppCoordinator: ObservableObject {
                 snapshots: item.group.members.map(\.snapshot),
                 groupBundleID: item.group.key.hasPrefix("pid:") ? item.group.primary.snapshot.bundleID : item.group.key
             )
-            lastDwellActionAt[item.group.key] = now
+            actionCooldown.record(item.group.key, at: now)
             if result.ok {
                 names.append(item.group.displayName)
                 switch item.action {
@@ -833,7 +822,6 @@ public final class AppCoordinator: ObservableObject {
                 )
             }
         }
-        lastAutoAppliedSignature = signature
         var parts: [String] = []
         if throttleCount > 0 { parts.append("降低 \(throttleCount) 个优先级") }
         if quitCount > 0 { parts.append("请求退出 \(quitCount) 个应用") }

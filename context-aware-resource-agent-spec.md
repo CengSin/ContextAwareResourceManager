@@ -189,7 +189,7 @@ score 归一化到 0-100，clip 下界为 0。离场景加分在归一化之后�
 
 ```
 score < 30           → .none
-30 <= score < 60      → .throttle   （nice 或 SIGSTOP duty-cycle）
+30 <= score < 60      → .throttle   （Darwin 后台调度策略）
 60 <= score < 85      → .freeze     （SIGSTOP，可 SIGCONT 恢复）
 score >= 85           → .quit       （仅当 App 无未保存内容提示时才建议）
 ```
@@ -198,7 +198,7 @@ score >= 85           → .quit       （仅当 App 无未保存内容提示时�
 
 产品动作只有 **保留 / 降低优先级 / 退出**。`.freeze` 一律拒绝（`已停用冻结`）。启动时仍会 `SIGCONT` 旧版本留下的冻结进程。
 
-- `.throttle`：`setpriority()` / `taskpolicy`，记下 `originalNice`，只还原自己改过的
+- `.throttle`：`setpriority(PRIO_DARWIN_PROCESS, pid, PRIO_DARWIN_BG)`；恢复时清除本工具设置的后台策略，不修改 POSIX nice（普通权限无法可靠还原 nice）
 - `.quit`：`NSRunningApplication.terminate()`，非 SIGKILL
 - PID + 内核启动时间对不上视为 PID 复用，拒绝并丢掉本工具账本
 - 不单独处理 Helper / Renderer
@@ -235,7 +235,7 @@ Chrome、Edge、Brave、Electron 等应用会拆成主进程 + Helper / Renderer
 - 禁止只对 Helper / Renderer 执行 throttle / freeze / quit；要对就对整个应用一起做
 - 场景选择器不列出 Helper，避免用户把 Renderer 当成独立 App 加进场景
 - 冻结 / 降速 / 退出前核对 PID 的内核启动时间；对不上视为 PID 复用，拒绝操作并清掉本工具自己的账本
-- 只还原本工具改过的暂停和 nice 原值；不 SIGCONT 别人停掉的进程，不把 nice 抬回 0（除非原来就是 0）
+- 只还原本工具改过的暂停和后台调度策略；不 SIGCONT 别人停掉的进程，不修改 POSIX nice
 
 Safari 的 `com.apple.WebKit.WebContent` 会被多个 App 共用，不并入 Safari，也不在本次范围内按族处理。
 

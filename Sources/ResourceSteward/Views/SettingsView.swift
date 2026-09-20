@@ -97,7 +97,7 @@ struct SettingsView: View {
                     Text("本工具不能压缩其他进程的内存页，也不能获取其他进程的 task port。菜单栏里出现的处理动作只有：降低优先级、退出。冻结已停用。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("退出管家时会恢复已降低的优先级，并解冻旧版本留下的冻结进程。")
+                    Text("降低优先级使用可撤销的后台调度策略，同时降低 CPU、磁盘和网络优先级，不修改 nice。退出管家时会撤销本工具设置的后台策略，并解冻旧版本留下的冻结进程。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("默认仅本机 SQLite。启用 Jev 时会向所配置 Base URL 的 `/v1/systemone` 发送灰区候选结构化状态（不含 API Key）。")

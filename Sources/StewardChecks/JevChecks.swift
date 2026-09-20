@@ -418,6 +418,89 @@ enum JevChecks {
         check("api key env var name", JevAPIKey.environmentVariable == "RESOURCE_STEWARD_JEV_API_KEY")
         check("api key status never empty", !JevAPIKey.statusDescription().isEmpty)
 
+        let controlled = ControlledBatchClient()
+        let batchAdvisor = JevReclaimAdvisor(enabled: true, client: controlled, apiKeyProvider: { "test-key" })
+        let resolved = DispatchSemaphore(value: 0)
+        batchAdvisor.setOnBatchResolved { resolved.signal() }
+        let app = JevGrayApp(index: 0, bundle_id: "com.example.test", name: "Test", idle_seconds: 120, memory_mb: 500, cpu_percent: 0, owns_windows: true, process_identity: "42:100")
+        let load = JevLoadState(memory_pressure: "critical", cpu_percent: 90, memory_used_ratio: 0.95, swap_used_mb: 100)
+        let first = batchAdvisor.syncBatch(load: load, apps: [app])
+        check("first batch is pending with no actions", first.pending && first.actions.isEmpty)
+        check("first batch request starts", controlled.started.wait(timeout: .now() + 2) == .success)
+        controlled.resolve(0)
+        check("first batch resolves", resolved.wait(timeout: .now() + 2) == .success)
+        check("resolved batch is reusable", batchAdvisor.syncBatch(load: load, apps: [app]).actions[app.bundle_id] == .quit)
+        var changed = load
+        changed.memory_pressure = "normal"
+        let waiting = batchAdvisor.syncBatch(load: changed, apps: [app])
+        check("new load never reuses old quit while pending", waiting.pending && waiting.actions.isEmpty && batchAdvisor.latestBatch().actions.isEmpty)
+        check("second request starts", controlled.started.wait(timeout: .now() + 2) == .success)
+        // Invalidate request 1 by changing the foreground; request 2 completes first.
+        changed.foreground_bundle_id = "com.example.editor"
+        _ = batchAdvisor.syncBatch(load: changed, apps: [app])
+        check("foreground change starts fresh request", controlled.started.wait(timeout: .now() + 2) == .success)
+        controlled.resolve(2, choice: "keep")
+        check("newest request resolves", resolved.wait(timeout: .now() + 2) == .success)
+        controlled.resolve(1)
+        check("superseded reply emits no resolved event", resolved.wait(timeout: .now() + 0.15) == .timedOut)
+        check("late old quit cannot overwrite new keep", batchAdvisor.latestBatch().actions[app.bundle_id] == SuggestedAction.none)
+        batchAdvisor.updateModel("another-model")
+        check("model change invalidates cached decisions", batchAdvisor.latestBatch().actions.isEmpty)
+        _ = batchAdvisor.syncBatch(load: changed, apps: [app])
+        check("changed model request starts", controlled.started.wait(timeout: .now() + 2) == .success)
+        batchAdvisor.updateEnabled(false)
+        controlled.resolve(3)
+        check("disabled advisor rejects in-flight result", resolved.wait(timeout: .now() + 0.15) == .timedOut && batchAdvisor.latestBatch().actions.isEmpty)
+        batchAdvisor.updateEnabled(true)
+        _ = batchAdvisor.syncBatch(load: changed, apps: [app])
+        check("reenabled request starts", controlled.started.wait(timeout: .now() + 2) == .success)
+        controlled.resolve(4, fail: true)
+        check("request failure resolves safely", resolved.wait(timeout: .now() + 2) == .success && batchAdvisor.latestBatch().actions.isEmpty)
+        var reopened = app
+        reopened.process_identity = "42:200"
+        check("relaunch invalidates batch signature", JevBatchQuestions.signature(load: load, apps: [app]) != JevBatchQuestions.signature(load: load, apps: [reopened]))
+        _ = batchAdvisor.syncBatch(load: changed, apps: [reopened])
+        check("reopened app request starts", controlled.started.wait(timeout: .now() + 2) == .success)
+        _ = batchAdvisor.syncBatch(load: changed, apps: [])
+        controlled.resolve(5)
+        check("empty gray zone invalidates in-flight reply", resolved.wait(timeout: .now() + 0.15) == .timedOut && batchAdvisor.latestBatch().actions.isEmpty)
+
         return failures
+    }
+}
+
+/// Holds responses so checks can drive cache invalidation and out-of-order replies.
+private final class ControlledBatchClient: JevClientProtocol, @unchecked Sendable {
+    private let lock = NSLock()
+    private var replies: [String: CheckedContinuation<JevPayloadResult, Error>] = [:]
+    private var ids: [String] = []
+    let started = DispatchSemaphore(value: 0)
+
+    func evaluate(state: JevRequestState, apiKey: String, requestID: String, endpoint: URL, model: String) async throws -> JevClientResult {
+        throw JevClientError.incompleteAnswers
+    }
+
+    func evaluatePayload(stateJSON: Data, questionsJSON: Data, apiKey: String, requestID: String, endpoint: URL, model: String) async throws -> JevPayloadResult {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            replies[requestID] = continuation
+            ids.append(requestID)
+            lock.unlock()
+            started.signal()
+        }
+    }
+
+    func resolve(_ index: Int, choice: String = "quit", fail: Bool = false) {
+        lock.lock()
+        guard ids.indices.contains(index) else { lock.unlock(); return }
+        let id = ids[index]
+        let reply = replies.removeValue(forKey: id)
+        lock.unlock()
+        if fail {
+            reply?.resume(throwing: JevClientError.timeout)
+        } else {
+            let json = "{\"app_0\":{\"choice\":\"\(choice)\",\"confidence\":0.99}}"
+            reply?.resume(returning: JevPayloadResult(requestID: id, model: "test", answersJSON: Data(json.utf8), httpStatus: 200, latencyMs: 1))
+        }
     }
 }

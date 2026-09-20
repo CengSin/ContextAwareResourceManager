@@ -48,6 +48,9 @@ int rs_host_memory(RSHostMemory *out);
 /// Returns kernel p_stat (SRUN=2, SSLEEP=3, SSTOP=4, …) or -1.
 int rs_process_status(int32_t pid);
 
+/// Returns task scheduling priority, or -1 when unavailable.
+int rs_process_priority(int32_t pid);
+
 /// Copies the process start time. Returns 0 on success, -1 if the pid is gone.
 int rs_process_generation(int32_t pid, uint64_t *start_sec, uint32_t *start_usec);
 

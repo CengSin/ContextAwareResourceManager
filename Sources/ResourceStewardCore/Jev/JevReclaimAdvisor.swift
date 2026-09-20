@@ -32,6 +32,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     /// Fresh composed decisions keyed by bundle ID.
     private var decisions: [String: Decision] = [:]
     private var batchInFlight = false
+    private var batchEpoch = UUID()
+    private var desiredBatchSignature = ""
     private var lastBatch = JevBatchSnapshot.empty
     private var lastBatchAt = Date.distantPast
     private var onBatchResolved: (@Sendable () -> Void)?
@@ -67,6 +69,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         let was = isEnabled
         isEnabled = enabled
         if was != enabled {
+            invalidateBatch()
             let source = JevAPIKey.load().source.rawValue
             JevLog.info("enabled_updated enabled=\(enabled) api_key_source=\(source)")
         }
@@ -75,6 +78,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     public func updateBaseURL(_ baseURLString: String) {
         let next = JevURLSessionClient.resolveEndpoint(baseURLString: baseURLString)
         if next != endpoint {
+            invalidateBatch()
             endpoint = next
             JevLog.info("endpoint_updated url=\(next.absoluteString)")
         } else {
@@ -86,6 +90,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let next = trimmed.isEmpty ? JevQuestions.defaultModel : trimmed
         if next != self.model {
+            invalidateBatch()
             self.model = next
             JevLog.info("model_updated id=\(next)")
         } else {
@@ -357,11 +362,25 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     }
 
     public func knownBatchActions() -> [String: SuggestedAction] {
-        withState { lastBatch.actions }
+        latestBatch().actions
     }
 
     public func latestBatch() -> JevBatchSnapshot {
-        withState { lastBatch }
+        withState {
+            guard !lastBatch.pending, lastBatch.signature == desiredBatchSignature,
+                  Date().timeIntervalSince(lastBatchAt) < Self.batchTTL else { return .empty }
+            return lastBatch
+        }
+    }
+
+    public func invalidateBatch() {
+        withState {
+            batchEpoch = UUID()
+            batchInFlight = false
+            lastBatch = .empty
+            lastBatchAt = .distantPast
+            desiredBatchSignature = ""
+        }
     }
 
     public func setOnBatchResolved(_ handler: (@Sendable () -> Void)?) {
@@ -377,42 +396,19 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         guard isActive else { return .empty }
         let capped = JevBatchQuestions.capped(apps)
         let signature = JevBatchQuestions.signature(load: load, apps: capped)
-        if capped.isEmpty {
-            let empty = JevBatchSnapshot(signature: signature)
-            withState { lastBatch = empty }
-            return empty
-        }
-
-        let (cached, flying) = withState { () -> (JevBatchSnapshot?, Bool) in
-            if lastBatch.signature == signature, !lastBatch.pending, !lastBatch.actions.isEmpty {
-                if Date().timeIntervalSince(lastBatchAt) < Self.batchTTL {
-                    return (lastBatch, batchInFlight)
-                }
-            }
-            return (nil, batchInFlight)
-        }
-        if let cached { return cached }
-        if flying {
-            return withState {
-                JevBatchSnapshot(
-                    signature: signature,
-                    actions: lastBatch.actions,
-                    pending: true,
-                    requestID: lastBatch.requestID
-                )
+        withState {
+            if desiredBatchSignature != signature {
+                batchEpoch = UUID()
+                batchInFlight = false
+                lastBatch = .empty
+                desiredBatchSignature = signature
             }
         }
-        if scheduleIfNeeded {
-            scheduleBatch(load: load, apps: capped, signature: signature)
-        }
-        return withState {
-            JevBatchSnapshot(
-                signature: signature,
-                actions: lastBatch.signature == signature ? lastBatch.actions : [:],
-                pending: true,
-                requestID: lastBatch.requestID
-            )
-        }
+        guard !capped.isEmpty else { return .empty }
+        let cached = latestBatch()
+        if cached.signature == signature, !cached.actions.isEmpty { return cached }
+        if scheduleIfNeeded { scheduleBatch(load: load, apps: capped, signature: signature) }
+        return JevBatchSnapshot(signature: signature, pending: true)
     }
 
     private func scheduleBatch(load: JevLoadState, apps: [JevGrayApp], signature: String) {
@@ -425,7 +421,6 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
             batchInFlight = true
             lastBatch = JevBatchSnapshot(
                 signature: signature,
-                actions: lastBatch.actions,
                 pending: true
             )
             return false
@@ -447,6 +442,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
             "request_start request_id=\(requestID) batch apps=\(apps.count) pressure=\(load.memory_pressure) cpu=\(Int(load.cpu_percent)) signature=\(signature)"
         )
 
+        let epoch = withState { batchEpoch }
         let client = self.client
         let endpoint = self.endpoint
         let model = self.model
@@ -466,7 +462,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                     model: model
                 )
                 let actions = try JevBatchQuestions.parseJSON(payload.answersJSON, apps: apps)
-                self.withState {
+                let accepted = self.withState { () -> Bool in
+                    guard self.batchEpoch == epoch, self.desiredBatchSignature == signature else { return false }
                     self.batchInFlight = false
                     self.lastBatchAt = Date()
                     self.lastBatch = JevBatchSnapshot(
@@ -484,7 +481,9 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                             requestID: payload.requestID
                         )
                     }
+                    return true
                 }
+                guard accepted else { return }
                 let summary = actions.map { "\($0.key)=\($0.value.rawValue)" }.sorted().joined(separator: ",")
                 JevLog.info(
                     "request_ok request_id=\(payload.requestID) batch status=\(payload.httpStatus) latency_ms=\(payload.latencyMs) actions=\(summary)"
@@ -492,11 +491,14 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                 let handler = self.withState { self.onBatchResolved }
                 handler?()
             } catch {
-                self.withState {
+                let accepted = self.withState { () -> Bool in
+                    guard self.batchEpoch == epoch, self.desiredBatchSignature == signature else { return false }
                     self.batchInFlight = false
                     self.lastBatchAt = Date()
                     self.lastBatch = JevBatchSnapshot(signature: signature, pending: false)
+                    return true
                 }
+                guard accepted else { return }
                 JevLog.error(
                     "request_fail request_id=\(requestID) batch message=\(error.localizedDescription)"
                 )

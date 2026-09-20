@@ -9,6 +9,7 @@ public struct JevGrayApp: Codable, Sendable, Equatable {
     public var memory_mb: Double
     public var cpu_percent: Double
     public var owns_windows: Bool
+    public var process_identity: String?
 
     public init(
         index: Int,
@@ -17,7 +18,8 @@ public struct JevGrayApp: Codable, Sendable, Equatable {
         idle_seconds: Double,
         memory_mb: Double,
         cpu_percent: Double,
-        owns_windows: Bool
+        owns_windows: Bool,
+        process_identity: String? = nil
     ) {
         self.index = index
         self.bundle_id = bundle_id
@@ -26,6 +28,7 @@ public struct JevGrayApp: Codable, Sendable, Equatable {
         self.memory_mb = memory_mb
         self.cpu_percent = cpu_percent
         self.owns_windows = owns_windows
+        self.process_identity = process_identity
     }
 }
 
@@ -109,7 +112,8 @@ public enum JevBatchQuestions: Sendable {
                 idle_seconds: app.idle_seconds,
                 memory_mb: app.memory_mb,
                 cpu_percent: app.cpu_percent,
-                owns_windows: app.owns_windows
+                owns_windows: app.owns_windows,
+                process_identity: app.process_identity
             )
         }
     }
@@ -120,9 +124,9 @@ public enum JevBatchQuestions: Sendable {
         let appPart = apps.map { app in
             let idleBucket = Int(app.idle_seconds / 60)
             let mbBucket = Int(app.memory_mb / 200)
-            return "\(app.bundle_id):\(idleBucket):\(mbBucket)"
+            return "\(app.bundle_id):\(idleBucket):\(mbBucket):\(Int(app.cpu_percent / 15)):\(app.owns_windows):\(app.process_identity ?? "")"
         }.joined(separator: ",")
-        return "\(load.memory_pressure)|c\(cpuBucket)|m\(memBucket)|\(appPart)"
+        return "\(load.foreground_bundle_id)|s\(Int(load.swap_used_mb / 200))|\(load.memory_pressure)|c\(cpuBucket)|m\(memBucket)|\(appPart)"
     }
 
     public static func payload(appCount: Int) -> [String: Any] {
@@ -214,7 +218,8 @@ public enum JevGrayZone: Sendable {
                     idle_seconds: group.idleSeconds,
                     memory_mb: group.totalMemoryMB,
                     cpu_percent: group.cpuPercent,
-                    owns_windows: group.ownsWindows
+                    owns_windows: group.ownsWindows,
+                    process_identity: group.members.map { "\($0.snapshot.pid):\($0.snapshot.startUnix)" }.sorted().joined(separator: ",")
                 )
             )
         }

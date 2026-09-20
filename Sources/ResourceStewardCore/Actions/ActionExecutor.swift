@@ -36,6 +36,10 @@ public final class ActionExecutor: @unchecked Sendable {
     private let currentUID = getuid()
     /// Test seam. `nil` means ask the kernel.
     public var lookupGeneration: ((Int32) -> ProcessGeneration?)?
+    public var currentForeground: () -> (pid: Int32, bundleID: String?) = {
+        let app = NSWorkspace.shared.frontmostApplication
+        return (app?.processIdentifier ?? 0, app?.bundleIdentifier)
+    }
     public var extraKeepAliveBundleIDs: Set<String> = []
     /// Tick-scoped window-owner PID set from `AppCoordinator.refresh`.
     /// When `reuseWindowOwnerPIDs` is true, freeze-safety uses this value as-is
@@ -146,6 +150,14 @@ public final class ActionExecutor: @unchecked Sendable {
         if let denied = denyIfCategoryBanned(action: action, snapshots: snapshots) {
             return denied
         }
+        if action.isActable {
+            for snapshot in snapshots {
+                if let denied = denyIfUnsafe(snapshot) { return denied }
+                if let mismatch = generationMismatch(expected: snapshot.generation, pid: snapshot.pid) {
+                    return ActionResult(ok: false, message: mismatch, action: action, pid: snapshot.pid)
+                }
+            }
+        }
         if action == .quit {
             return quitGroup(snapshots: snapshots, bundleID: groupBundleID)
         }
@@ -166,7 +178,7 @@ public final class ActionExecutor: @unchecked Sendable {
         default:
             message = last.message
         }
-        return ActionResult(ok: true, message: message, action: action, pid: last.pid)
+        return ActionResult(ok: okCount == snapshots.count, message: message, action: action, pid: last.pid)
     }
 
     public func execute(action: SuggestedAction, snapshot: ProcessSnapshot) -> ActionResult {
@@ -240,7 +252,7 @@ public final class ActionExecutor: @unchecked Sendable {
             lock.unlock()
             return ActionResult(ok: false, message: mismatch, action: .throttle, pid: pid)
         }
-        if !setNice(pid: pid, value: record.originalNice) {
+        if setpriority(PRIO_DARWIN_PROCESS, UInt32(bitPattern: pid), 0) != 0 {
             return ActionResult(ok: false, message: "恢复优先级失败：\(posixError())", action: .throttle, pid: pid)
         }
         lock.lock()
@@ -249,17 +261,22 @@ public final class ActionExecutor: @unchecked Sendable {
         return ActionResult(ok: true, message: "已恢复进程 \(pid) 的 CPU 优先级", action: .throttle, pid: pid)
     }
 
-    public func thawAll() {
+    @discardableResult
+    public func thawAll() -> [ActionResult] {
+        var failures: [ActionResult] = []
         let pids = frozenProcesses.map(\.pid)
         for pid in pids {
-            _ = thaw(pid: pid)
+            let result = thaw(pid: pid)
+            if !result.ok { failures.append(result) }
         }
         lock.lock()
         let throttlePIDs = Array(throttled.keys)
         lock.unlock()
         for pid in throttlePIDs {
-            _ = unthrottle(pid: pid)
+            let result = unthrottle(pid: pid)
+            if !result.ok { failures.append(result) }
         }
+        return failures
     }
 
     /// Re-adopts previously frozen PIDs after relaunch. Does not resume them.
@@ -321,19 +338,15 @@ public final class ActionExecutor: @unchecked Sendable {
         guard let originalNice = currentNice(pid: snapshot.pid) else {
             return ActionResult(ok: false, message: "读取 \(snapshot.processName) 的优先级失败：\(posixError())", action: .throttle, pid: snapshot.pid)
         }
-        if originalNice >= 15 {
-            lock.lock()
-            throttled[snapshot.pid] = ThrottleRecord(
-                pid: snapshot.pid,
-                startUnix: recordedStartUnix(snapshot),
-                originalNice: originalNice,
-                bundleID: snapshot.bundleID ?? "",
-                processName: snapshot.processName
-            )
-            lock.unlock()
-            return ActionResult(ok: true, message: "\(snapshot.processName) 已处于较低优先级", action: .throttle, pid: snapshot.pid)
+        // Do not take ownership of a process already backgrounded by another
+        // controller (Darwin background tasks have scheduling priority <= 4).
+        let priority = rs_process_priority(snapshot.pid)
+        guard priority > 4 else {
+            return ActionResult(ok: false, message: "无法确认原调度状态，或进程已处于后台低优先级；未修改。", action: .throttle, pid: snapshot.pid)
         }
-        if !setNice(pid: snapshot.pid, value: 15) {
+        // Darwin background policy is reversible by the same user. Raising a
+        // POSIX nice priority again would require privileges we do not have.
+        if setpriority(PRIO_DARWIN_PROCESS, UInt32(bitPattern: snapshot.pid), PRIO_DARWIN_BG) != 0 {
             return ActionResult(ok: false, message: "降低优先级失败：\(posixError())", action: .throttle, pid: snapshot.pid)
         }
         lock.lock()
@@ -395,44 +408,23 @@ public final class ActionExecutor: @unchecked Sendable {
     }
 
     private func quitGroup(snapshots: [ProcessSnapshot], bundleID: String?) -> ActionResult {
-        if let first = snapshots.first, let denied = denyIfUnsafe(first) { return denied }
-        if let first = snapshots.first,
-           let mismatch = generationMismatch(expected: first.generation, pid: first.pid) {
-            return ActionResult(ok: false, message: mismatch, action: .quit, pid: first.pid)
+        // Resolve only within the validated snapshots; never select another
+        // running instance merely because it has the same bundle identifier.
+        let roots = snapshots.filter {
+            !ProcessFamily.isCompanion(bundleID: $0.bundleID, processName: $0.processName)
         }
-        let pid = snapshots.first?.pid ?? 0
-        let name = snapshots.first?.processName ?? "应用"
-        var ids: [String] = []
-        if let bundleID, !bundleID.isEmpty {
-            ids.append(bundleID)
-            if let root = ProcessFamily.rootBundleID(from: bundleID), root != bundleID {
-                ids.append(root)
+        for snapshot in roots {
+            guard let app = NSRunningApplication(processIdentifier: snapshot.pid) else { continue }
+            if let bundleID, app.bundleIdentifier != bundleID { continue }
+            if let denied = denyIfUnsafe(snapshot) { return denied }
+            if let mismatch = generationMismatch(expected: snapshot.generation, pid: snapshot.pid) {
+                return ActionResult(ok: false, message: mismatch, action: .quit, pid: snapshot.pid)
             }
-            if bundleID.lowercased().contains(".helper") {
-                ids.append(contentsOf: helperParentIDs(bundleID))
-            }
-        }
-        for id in ids {
-            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: id)
-            let target = apps.first(where: { $0.activationPolicy == .regular }) ?? apps.first
-            if let target, target.terminate() {
-                return ActionResult(ok: true, message: "已请求 \(target.localizedName ?? name) 退出。若有未保存内容，应用会自行提示。", action: .quit, pid: pid)
+            if app.terminate() {
+                return ActionResult(ok: true, message: "已请求 \(snapshot.processName) 退出。若有未保存内容，应用会自行提示。", action: .quit, pid: snapshot.pid)
             }
         }
-        if let app = NSRunningApplication(processIdentifier: pid), app.terminate() {
-            return ActionResult(ok: true, message: "已请求 \(name) 退出。若有未保存内容，应用会自行提示。", action: .quit, pid: pid)
-        }
-        return ActionResult(ok: false, message: "无法通过系统接口请求退出该进程（可能不是标准 App）。未执行强制结束。", action: .quit, pid: pid)
-    }
-
-    private func helperParentIDs(_ bundleID: String) -> [String] {
-        var id = bundleID
-        var results: [String] = []
-        while let range = id.range(of: ".helper", options: [.caseInsensitive, .backwards]) {
-            id = String(id[..<range.lowerBound])
-            if !id.isEmpty { results.append(id) }
-        }
-        return results
+        return ActionResult(ok: false, message: "无法通过系统接口请求退出已校验的应用。未执行强制结束。", action: .quit, pid: snapshots.first?.pid ?? 0)
     }
 
     private func denyIfCategoryBanned(action: SuggestedAction, snapshots: [ProcessSnapshot]) -> ActionResult? {
@@ -473,7 +465,10 @@ public final class ActionExecutor: @unchecked Sendable {
         if snapshot.uid != currentUID {
             return ActionResult(ok: false, message: "只能处理当前用户的进程。", action: .none, pid: snapshot.pid)
         }
-        if snapshot.isForeground {
+        let front = currentForeground()
+        let root = snapshot.bundleID.flatMap { ProcessFamily.rootBundleID(from: $0) } ?? snapshot.bundleID
+        if snapshot.isForeground || front.pid == snapshot.pid
+            || (front.bundleID != nil && (front.bundleID == snapshot.bundleID || front.bundleID == root)) {
             return ActionResult(ok: false, message: "不会处理后台以外的前台应用。", action: .none, pid: snapshot.pid)
         }
         return nil
@@ -499,7 +494,7 @@ public final class ActionExecutor: @unchecked Sendable {
     }
 
     private func generationMismatch(expected: ProcessGeneration, pid: Int32) -> String? {
-        guard expected.isKnown else { return nil }
+        guard expected.isKnown else { return "无法核对进程启动时间，已跳过操作。" }
         guard let live = currentGeneration(pid: pid) else {
             return "进程 \(pid) 已退出，跳过操作以免误伤复用的 PID。"
         }
@@ -514,44 +509,6 @@ public final class ActionExecutor: @unchecked Sendable {
             return nil
         }
         return value
-    }
-
-    /// Raising priority (lowering nice) usually needs privileges. Verify the kernel value.
-    private func setNice(pid: Int32, value: Int32) -> Bool {
-        errno = 0
-        if setpriority(PRIO_PROCESS, UInt32(bitPattern: pid), value) == 0,
-           niceMatches(pid: pid, value: value) {
-            return true
-        }
-        if value <= 0, runTaskPolicy("-B", pid: pid), niceMatches(pid: pid, value: value) {
-            return true
-        }
-        if value >= 20, runTaskPolicy("-b", pid: pid), niceMatches(pid: pid, value: value) {
-            return true
-        }
-        return false
-    }
-
-    private func niceMatches(pid: Int32, value: Int32) -> Bool {
-        guard let current = currentNice(pid: pid) else { return false }
-        if value <= 0 { return current <= 0 }
-        if value >= 15 { return current >= 15 }
-        return abs(current - value) <= 1
-    }
-
-    private func runTaskPolicy(_ flag: String, pid: Int32) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/taskpolicy")
-        process.arguments = [flag, "-p", "\(pid)"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
     }
 
     private func isGone(_ message: String) -> Bool {

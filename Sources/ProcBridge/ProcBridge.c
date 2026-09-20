@@ -146,6 +146,13 @@ int rs_process_status(int32_t pid) {
     return (int)bsd.pbi_status;
 }
 
+int rs_process_priority(int32_t pid) {
+    struct proc_taskinfo info;
+    memset(&info, 0, sizeof(info));
+    int got = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, (int)sizeof(info));
+    return got == sizeof(info) ? info.pti_priority : -1;
+}
+
 int rs_process_generation(int32_t pid, uint64_t *start_sec, uint32_t *start_usec) {
     if (pid <= 0) {
         return -1;
