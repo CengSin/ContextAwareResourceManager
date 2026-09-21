@@ -4,7 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var coordinator: AppCoordinator
     @State private var apiKeyDraft: String = ""
-    @State private var keyStatus: String = JevAPIKey.statusDescription()
+    @State private var keyError: String?
 
     var body: some View {
         ScrollView {
@@ -59,23 +59,28 @@ struct SettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
                     HStack {
-                        Button("保存到钥匙串") {
+                        Button("保存 Key") {
                             do {
-                                try JevKeychain.saveAPIKey(apiKeyDraft)
-                                keyStatus = JevAPIKey.statusDescription()
+                                try coordinator.saveJevAPIKey(apiKeyDraft)
+                                apiKeyDraft = ""
+                                keyError = nil
                             } catch {
-                                keyStatus = error.localizedDescription
+                                keyError = error.localizedDescription
                             }
                         }
                         .controlSize(.small)
                         Button("清除 Key") {
-                            _ = JevKeychain.deleteAPIKey()
-                            apiKeyDraft = ""
-                            keyStatus = JevAPIKey.statusDescription()
+                            do {
+                                try coordinator.saveJevAPIKey("")
+                                apiKeyDraft = ""
+                                keyError = nil
+                            } catch {
+                                keyError = error.localizedDescription
+                            }
                         }
                         .controlSize(.small)
                         Spacer()
-                        Text(keyStatus)
+                        Text(keyError ?? coordinator.jevAPIKeyStatus)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -89,12 +94,6 @@ struct SettingsView: View {
                 }
             }
             .padding(14)
-            .onAppear {
-                keyStatus = JevAPIKey.statusDescription()
-                if apiKeyDraft.isEmpty, JevAPIKey.hasAPIKey {
-                    apiKeyDraft = ""
-                }
-            }
         }
     }
 

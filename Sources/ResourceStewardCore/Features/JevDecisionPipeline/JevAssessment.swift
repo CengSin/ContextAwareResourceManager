@@ -68,9 +68,9 @@ public enum JevAnswerValidation {
         return number.doubleValue
     }
 
-    public static func object(_ raw: Any?, type: String) throws -> [String: Any] {
+    public static func object(_ raw: Any?, type: String, field: String = "answer") throws -> [String: Any] {
         guard let obj = raw as? [String: Any], obj["type"] as? String == type else {
-            throw JevClientError.parse("missing or incorrect answer type")
+            throw JevClientError.parse("\(field): expected \(type) answer object with matching type")
         }
         return obj
     }

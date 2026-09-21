@@ -225,8 +225,7 @@ enum JevChecks {
             decodedBase.jevModel == JevURLSessionClient.defaultModel
         )
 
-        check("api key env var name", JevAPIKey.environmentVariable == "RESOURCE_STEWARD_JEV_API_KEY")
-        check("api key status never empty", !JevAPIKey.statusDescription().isEmpty)
+        failures += try JevCredentialChecks.run()
 
         let controlled = ControlledBatchClient()
         let batchAdvisor = JevReclaimAdvisor(enabled: true, client: controlled, apiKeyProvider: { "test-key" })
@@ -266,17 +265,25 @@ enum JevChecks {
         check("reenabled request starts", controlled.started.wait(timeout: .now() + 2) == .success)
         controlled.resolve(4, fail: true)
         check("request failure resolves safely", resolved.wait(timeout: .now() + 2) == .success && batchAdvisor.latestBatch().actions.isEmpty)
+        batchAdvisor.updateAPIKey("replacement")
+        _ = batchAdvisor.syncBatch(load: changed, apps: [app])
+        check("replacement key starts fresh request", controlled.started.wait(timeout: .now() + 2) == .success)
+        batchAdvisor.updateAPIKey(nil)
+        controlled.resolve(5)
+        check("cleared key rejects in-flight result", resolved.wait(timeout: .now() + 0.15) == .timedOut && batchAdvisor.latestBatch().actions.isEmpty && !batchAdvisor.isActive)
+        batchAdvisor.updateAPIKey("replacement")
         var reopened = app
         reopened.process_identity = "42:200"
         check("relaunch invalidates batch signature", JevBatchQuestions.signature(load: load, apps: [app]) != JevBatchQuestions.signature(load: load, apps: [reopened]))
         _ = batchAdvisor.syncBatch(load: changed, apps: [reopened])
         check("reopened app request starts", controlled.started.wait(timeout: .now() + 2) == .success)
         _ = batchAdvisor.syncBatch(load: changed, apps: [])
-        controlled.resolve(5)
+        controlled.resolve(6)
         check("empty gray zone invalidates in-flight reply", resolved.wait(timeout: .now() + 0.15) == .timedOut && batchAdvisor.latestBatch().actions.isEmpty)
 
         failures.append(contentsOf: try JevPipelineChecks.run())
         failures.append(contentsOf: try JevSequencingChecks.run())
+        failures.append(contentsOf: try JevFamilyChecks.run())
         return failures
     }
 }

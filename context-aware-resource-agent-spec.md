@@ -216,6 +216,8 @@ score >= 85           → .quit       （仅当 App 无未保存内容提示时�
 5. 每次动作后等待至少 30 秒并重新评估，同一应用尝试冷却 90 秒；退出候选至少 5 分钟未到前台。
 6. Level 2 不可用。硬门排除前台、保护进程、VPN/VM、会议/录屏、IM、输入法/辅助、常用、accessory、非用户应用。
 
+咨询身份取应用族中的主应用，资源占用取整组汇总；不以最大内存成员的 Helper 身份代表整组。看板区分未请求的具体原因、两阶段进度和失败冷却，检查程序不写正式应用文件日志。
+
 完整算法、问题、阈值和验证参见 [JevDecisionPipeline](ui-specs/JevDecisionPipeline/README.md)。
 
 ### 5.6 进程族（Helper / Renderer）
@@ -311,3 +313,5 @@ Jev 通过 `evaluatePayload` 接收两次顺序请求；默认模型 `jev-latest
 2. Action Executor 的 `.freeze`/`.quit` 效果依赖目标 App 是否规范处理 SIGSTOP/未保存状态提示，个别 App 可能有异常表现，需要建立"问题 App 黑名单"机制（用户反馈后拉黑，不再对其建议自动处理）。对有窗口的 AppKit 应用执行 `SIGSTOP` 会卡住 WindowServer（已在 5.4 禁止）
 3. Reclaim Score 的固定权重是经验值，v1 阶段没有真实用户反馈数据支撑，预期需要至少一轮种子用户使用后调整
 4. 内存相关的"预计可释放"数值本质是估算，不承诺实际效果，需要在首次使用时做一次性说明（onboarding），避免后续被认为是虚假宣传
+
+Jev API Key 独立存储在本地 SQLite 的 `settings` 表 `jev.apiKey` 条目，启动加载一次并在内存中供请求使用；保存或清除成功后更新缓存并使旧决策失效。凭据不参与 AppSettings 编解码，不写入日志。

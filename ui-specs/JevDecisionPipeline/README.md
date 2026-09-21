@@ -7,11 +7,11 @@
 - 核心：`Sources/ResourceStewardCore/Features/JevDecisionPipeline/`
 - 界面：`Sources/ResourceSteward/Features/JevDecisionPipeline/`
 - 检查：`Sources/StewardChecks/Features/JevDecisionPipeline/`
-- `AppCoordinator` 负责采样、授权路由与执行接线；API 凭据保存在 Keychain。
+- `AppCoordinator` 负责采样、授权路由与执行接线；API 凭据保存在 SQLite 的 `settings` 表独立条目 `jev.apiKey`。
 
 ## 本地候选算法
 
-先按应用族聚合，使用前台、系统保护、类别禁令、常用保活、accessory 和用户应用规则过滤。
+先按应用族聚合，使用前台、系统保护、类别禁令、常用保活、accessory 和用户应用规则过滤。咨询身份、PID、名称、路径及 regular/accessory 属性来自主应用成员，资源占用仍按整组汇总；内存最大的 Renderer 不代表主应用身份。只有 Helper 的组不进入咨询；主应用在前台或常用保活名单中时整组保护。
 
 | 目标 | 触发与候选条件 | 优先级 |
 |---|---|---|
@@ -75,7 +75,10 @@ Score 保存 0–3 分值、概率分布和 confidence；Noul 保存“是”的
 - 模型、端点、开关、签名改变后，两阶段中的过期响应均不覆盖当前状态；无候选时失效。
 - 任一阶段失败、超时、缺字段或尚未完成均不执行。相同签名失败后至少 20 秒再请求。
 - 没有建议：检查持续时间、候选条件、语义不确定性和置信度；这不等于网络故障。
-- 日志子系统 `cc.resourcesteward.jev`；第二阶段请求 ID 带 `-decision` 后缀。
+- 日志子系统 `cc.resourcesteward.jev`；第二阶段请求 ID 带 `-decision` 后缀。每阶段记录开始/成功/失败及阶段名，解析错误指出具体问题字段，不记录凭据或完整响应。
+- `candidate_groups` 每分钟汇总应用族数量、可咨询数量和硬门排除原因；`request_skipped` 每分钟按原因记录等待负载持续、没有可治理应用或候选未满足空闲/占用条件。
+- 看板治理状态区分：负载正常、观察负载、无可治理应用、候选不足、评估阶段 1/2 与 2/2、失败等待重试、动作后观察。失败的 20 秒重试冷却显示错误，而非一直显示正在请求。
+- `StewardChecks` 启动时关闭文件日志写入；模拟响应、故意失败用例仅进入测试进程日志和内存记录，不写正式应用的 `jev-reclaim.log`。
 
 ## 验证
 
@@ -90,3 +93,9 @@ API 依据：[Score](https://docs.typesafe.ai/primitives/score)、[Noul](https:/
 ![浅色确认弹窗](assets/confirmation-light.png)
 
 ![深色确认弹窗](assets/confirmation-dark.png)
+
+### API 凭据存储
+
+设置页的 `secure text field "API Key"` 配合 `button "保存 Key"` 和 `button "清除 Key"` 管理凭据。Key 作为文本写入应用 SQLite 的 `settings` 表（`jev.apiKey`），与 `app` 设置项独立。启动时读取一次，采样与请求使用内存缓存。保存时裁掉首尾空白；空值等同清除。成功后清空输入框，并废弃已有建议、待确认批次和未完成请求的结果；新评估使用新 Key。保存或清除失败会显示错误，保持原有凭据和决策状态。读取失败时显示错误并停用 Jev 请求。
+
+验证：`StewardChecks --jev-pipeline` 覆盖 SQLite 重启读取、替换、清除、绑定字符串、设置共存、失败保留，以及旧 Key 请求结果作废；界面状态显示“已配置（SQLite）”或“未配置”。

@@ -73,10 +73,10 @@ flowchart TD
 ## 设置与 Jev AI 配置面板
 - 用户称呼：设置 Tab、配置中心、Jev 配置、Settings
 - 入口：主面板底部导航栏 → 点击第 3 个 Tab “设置”
-- 关键选择器：`button "设置" of window 1`；授权单选按钮: `button` containing `"仅建议 (Level 0)"` / `button` containing `"半自动 (Level 1)"`；滑块: `slider 1` (AXRole=`AXSlider`, 范围 2-10s)；Jev 开关: `checkbox "启用 Jev 灰区判断"`；预设按钮: `button "TypeSafe"`, `button "OpenRouter"`；输入框: `text field "Base URL"`, `text field "模型"`, `secure text field "API Key"`；操作按钮: `button "保存到钥匙串"`, `button "清除 Key"`；存储路径: `AXStaticText` (SQLite 路径)
-- 子功能：授权模式切换（Level 0 手动弹窗确认 vs Level 1 自动执行通知）、采样间隔微调滑块（2s ~ 10s）、Jev 大模型灰区决策总开关、供应商一键预设套用（TypeSafe / OpenRouter）、自定义 API 端点与模型名称、API Key 安全存取至系统 Keychain（支持保存与清除）、本地 SQLite 存储文件物理路径展示与复制
-- 前置条件：macOS 钥匙串（Keychain）可用；网络可访问对应大模型 API 端点
-- 常见故障现象：保存 API Key 报错 → 钥匙串访问权限被拒或沙盒阻拦；Jev 建议不出现 → Jev 开关未打开、API Key 未配置或网络不通时保留
+- 关键选择器：`button "设置" of window 1`；授权单选按钮: `button` containing `"仅建议 (Level 0)"` / `button` containing `"半自动 (Level 1)"`；滑块: `slider 1` (AXRole=`AXSlider`, 范围 2-10s)；Jev 开关: `checkbox "启用 Jev 灰区判断"`；预设按钮: `button "TypeSafe"`, `button "OpenRouter"`；输入框: `text field "Base URL"`, `text field "模型"`, `secure text field "API Key"`；操作按钮: `button "保存 Key"`, `button "清除 Key"`；存储路径: `AXStaticText` (SQLite 路径)
+- 子功能：授权模式切换（Level 0 手动弹窗确认 vs Level 1 自动执行通知）、采样间隔微调滑块（2s ~ 10s）、Jev 大模型灰区决策总开关、供应商一键预设套用（TypeSafe / OpenRouter）、自定义 API 端点与模型名称、API Key 存取至本地 SQLite（支持保存与清除）、本地 SQLite 存储文件物理路径展示与复制
+- 前置条件：本地 SQLite 可读写；网络可访问对应大模型 API 端点
+- 常见故障现象：保存 API Key 报错 → SQLite 写入失败或文件不可写；Jev 建议不出现 → Jev 开关未打开、API Key 未配置或网络不通时保留
 
 ## 浮动确认弹窗
 - 用户称呼：确认弹窗、处理确认窗口、Jev 决策确认框、Confirm Dialog

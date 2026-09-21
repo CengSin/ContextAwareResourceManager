@@ -41,7 +41,12 @@ enum JevSequencingChecks {
         check("assessment retries after reenable", client.started.wait(timeout: .now() + 2) == .success)
         client.resolve(3, data: Data("{}".utf8))
         check("malformed assessment fails closed", completed.wait(timeout: .now() + 2) == .success && advisor.latestBatch().actions.isEmpty && client.count == 4)
-        _ = advisor.syncBatch(load: load, apps: [app])
+        let cooling = advisor.syncBatch(load: load, apps: [app])
+        if case .failed = cooling.status {
+            check("failure cooldown shows error instead of pending", !cooling.pending)
+        } else {
+            check("failure cooldown shows error instead of pending", false)
+        }
         check("failed request obeys retry cooldown", client.started.wait(timeout: .now() + 0.15) == .timedOut)
         load.memory_pressure = "normal"
         load.cpu_percent = 0

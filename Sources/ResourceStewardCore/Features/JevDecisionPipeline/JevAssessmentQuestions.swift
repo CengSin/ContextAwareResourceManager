@@ -45,23 +45,23 @@ public enum JevAssessmentQuestions {
             throw JevClientError.parse("assessment not object")
         }
         func urgency(_ key: String) throws -> JevUrgency {
-            let obj = try JevAnswerValidation.object(answers[key], type: "score")
+            let obj = try JevAnswerValidation.object(answers[key], type: "score", field: key)
             let score = try JevAnswerValidation.number(obj["score"], in: 0...3)
             let confidence = try JevAnswerValidation.number(obj["confidence"], in: 0...1)
             guard let raw = obj["probabilities"] as? [String: Any], Set(raw.keys) == Set(["0", "1", "2", "3"]) else {
-                throw JevClientError.parse("invalid score distribution")
+                throw JevClientError.parse("\(key).probabilities: expected levels 0,1,2,3")
             }
             let probabilities = try raw.mapValues { try JevAnswerValidation.number($0, in: 0...1) }
             let mean = probabilities.reduce(0.0) { $0 + Double($1.key)! * $1.value }
             guard abs(probabilities.values.reduce(0, +) - 1) < 0.02, abs(mean - score) < 0.05 else {
-                throw JevClientError.parse("inconsistent score distribution")
+                throw JevClientError.parse("\(key): inconsistent score distribution")
             }
             return JevUrgency(score: score, confidence: confidence, probabilities: probabilities)
         }
         var assessments: [String: JevAppAssessment] = [:]
         for app in apps {
             func noul(_ suffix: String) throws -> Double {
-                let obj = try JevAnswerValidation.object(answers["app_\(app.index)_\(suffix)"], type: "noul")
+                let obj = try JevAnswerValidation.object(answers["app_\(app.index)_\(suffix)"], type: "noul", field: "app_\(app.index)_\(suffix)")
                 return try JevAnswerValidation.number(obj["noul"], in: 0...1)
             }
             assessments[app.bundle_id] = try JevAppAssessment(work_related: noul("work_related"), continuous_service: noul("continuous_service"))

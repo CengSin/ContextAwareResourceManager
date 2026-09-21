@@ -91,6 +91,7 @@ public struct JevBatchSnapshot: Sendable, Equatable {
     public var actions: [String: SuggestedAction]
     public var pending: Bool
     public var evidence: [String: JevDecisionEvidence]
+    public var status: JevPipelineStatus?
     public var requestID: String?
 
     public init(
@@ -98,13 +99,15 @@ public struct JevBatchSnapshot: Sendable, Equatable {
         actions: [String: SuggestedAction] = [:],
         pending: Bool = false,
         requestID: String? = nil,
-        evidence: [String: JevDecisionEvidence] = [:]
+        evidence: [String: JevDecisionEvidence] = [:],
+        status: JevPipelineStatus? = nil
     ) {
         self.signature = signature
         self.actions = actions
         self.pending = pending
         self.requestID = requestID
         self.evidence = evidence
+        self.status = status
     }
 
     public static let empty = JevBatchSnapshot(signature: "")
@@ -134,13 +137,17 @@ public enum JevGrayZone: Sendable {
         windowOwnerPIDs: Set<Int32>?
     ) -> [JevGrayApp] {
         var apps: [JevGrayApp] = []
+        var excluded: [String: Int] = [:]
         for group in groups {
             let candidate = JevHardGate.Candidate(
                 group: group,
                 favorites: favorites,
                 windowOwnerPIDs: windowOwnerPIDs
             )
-            guard JevHardGate.isGrayZone(candidate) else { continue }
+            if let reason = JevHardGate.skipReason(for: candidate) {
+                excluded[reason.0.rawValue, default: 0] += 1
+                continue
+            }
             let bundle = candidate.bundleID
             guard !bundle.isEmpty, !bundle.hasPrefix("pid:") else { continue }
             apps.append(
@@ -156,6 +163,9 @@ public enum JevGrayZone: Sendable {
                 )
             )
         }
+        let summary = excluded.keys.sorted().map { "\($0)=\(excluded[$0] ?? 0)" }.joined(separator: ",")
+        JevLog.infoThrottled(key: "gray_zone_summary", interval: 60,
+            "candidate_groups total=\(groups.count) gray=\(apps.count) excluded=\(summary)")
         return apps
     }
 }

@@ -3,10 +3,10 @@
 ## 设置与 Jev AI 配置面板
 - 用户称呼：设置 Tab、配置中心、Jev 配置、Settings
 - 入口：主面板底部导航栏 → 点击第 3 个 Tab “设置”
-- 关键选择器：`button "设置" of window 1`；授权单选按钮: `button` containing `"仅建议 (Level 0)"` / `button` containing `"半自动 (Level 1)"`；滑块: `slider 1` (AXRole=`AXSlider`, 范围 2-10s)；Jev 开关: `checkbox "启用 Jev 灰区判断"`；预设按钮: `button "TypeSafe"`, `button "OpenRouter"`；输入框: `text field "Base URL"`, `text field "模型"`, `secure text field "API Key"`；操作按钮: `button "保存到钥匙串"`, `button "清除 Key"`；存储路径: `AXStaticText` (SQLite 路径)
-- 子功能：授权模式切换（Level 0 手动弹窗确认 vs Level 1 自动执行通知）、采样间隔微调滑块（2s ~ 10s）、Jev 大模型灰区决策总开关、供应商一键预设套用（TypeSafe / OpenRouter）、自定义 API 端点与模型名称、API Key 安全存取至系统 Keychain（支持保存与清除）、本地 SQLite 存储文件物理路径展示与复制
-- 前置条件：macOS 钥匙串（Keychain）可用；网络可访问对应大模型 API 端点
-- 常见故障现象：保存 API Key 报错 → 钥匙串访问权限被拒或沙盒阻拦；Jev 建议不出现 → Jev 开关未打开、API Key 未配置或网络不通时保留
+- 关键选择器：`button "设置" of window 1`；授权单选按钮: `button` containing `"仅建议 (Level 0)"` / `button` containing `"半自动 (Level 1)"`；滑块: `slider 1` (AXRole=`AXSlider`, 范围 2-10s)；Jev 开关: `checkbox "启用 Jev 灰区判断"`；预设按钮: `button "TypeSafe"`, `button "OpenRouter"`；输入框: `text field "Base URL"`, `text field "模型"`, `secure text field "API Key"`；操作按钮: `button "保存 Key"`, `button "清除 Key"`；存储路径: `AXStaticText` (SQLite 路径)
+- 子功能：授权模式切换（Level 0 手动弹窗确认 vs Level 1 自动执行通知）、采样间隔微调滑块（2s ~ 10s）、Jev 大模型灰区决策总开关、供应商一键预设套用（TypeSafe / OpenRouter）、自定义 API 端点与模型名称、API Key 存取至本地 SQLite（支持保存与清除）、本地 SQLite 存储文件物理路径展示与复制
+- 前置条件：本地 SQLite 可读写；网络可访问对应大模型 API 端点
+- 常见故障现象：保存 API Key 报错 → SQLite 写入失败或文件不可写；Jev 建议不出现 → Jev 开关未打开、API Key 未配置或网络不通时保留
 
 ---
 
@@ -30,10 +30,10 @@
 | OpenRouter 预设按钮 | `Button("OpenRouter")` | `AXButton` | `button "OpenRouter"` | `"OpenRouter"` (.small) | 一键填充 OpenRouter 默认端点与模型 |
 | Base URL 文本框 | `TextField("Base URL")` | `AXTextField` | 对应占位符 `"Base URL"` | 等宽字体文本框 | 设定 API 请求基地址 |
 | 模型名称文本框 | `TextField("模型")` | `AXTextField` | 对应占位符 `"模型"` | 等宽字体文本框 | 设定大语言模型代号 |
-| API Key 密码框 | `SecureField("API Key")` | `AXTextField` (Secure) | 对应占位符 `"API Key"` | 掩码输入框 | 输入大模型密钥（不落地明文） |
-| 保存到钥匙串按钮 | `Button("保存到钥匙串")` | `AXButton` | `button "保存到钥匙串"` | `"保存到钥匙串"` | 将输入密钥存入系统 Keychain |
-| 清除 Key 按钮 | `Button("清除 Key")` | `AXButton` | `button "清除 Key"` | `"清除 Key"` | 从系统 Keychain 删除已存密钥 |
-| 密钥状态标签 | `Text(keyStatus)` | `AXStaticText` | 按钮右侧状态文案 | `"已配置钥匙串"` / `"未配置"` / 错误信息 | 提示密钥存储健康状态 |
+| API Key 密码框 | `SecureField("API Key")` | `AXTextField` (Secure) | 对应占位符 `"API Key"` | 掩码输入框 | 输入大模型密钥（掩码显示） |
+| 保存 Key按钮 | `Button("保存 Key")` | `AXButton` | `button "保存 Key"` | `"保存 Key"` | 将输入密钥存入本地 SQLite |
+| 清除 Key 按钮 | `Button("清除 Key")` | `AXButton` | `button "清除 Key"` | `"清除 Key"` | 从本地 SQLite 删除已存密钥 |
+| 密钥状态标签 | `Text(keyError ?? coordinator.jevAPIKeyStatus)` | `AXStaticText` | 按钮右侧状态文案 | `"已配置（SQLite）"` / `"未配置"` / 错误信息 | 提示密钥存储健康状态 |
 
 #### 3. 数据存储区 (Data Storage)
 
@@ -83,3 +83,5 @@ window.buttons["TypeSafe"].click()
 - 同一候选与负载签名的结果最多复用 180 秒，前台应用或候选进程身份变化会重新评估。
 
 - 两阶段问题、阈值及候选规则见 [JevDecisionPipeline](JevDecisionPipeline/README.md)。Level 0 展示判断并确认，Level 1 使用同一决策自动执行。
+
+API Key 保存在 SQLite 的 `settings/jev.apiKey`，启动时加载并缓存。保存与清除成功后立即更新凭据状态、清空输入框并废弃旧 Jev 决策；空白输入等同清除。写入失败显示错误并保留原凭据，读取失败停止 Jev 请求。

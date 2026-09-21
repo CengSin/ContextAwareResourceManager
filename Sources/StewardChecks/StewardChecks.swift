@@ -6,6 +6,7 @@ import ResourceStewardCore
 @main
 enum StewardChecks {
     static func main() throws {
+        JevLog.configureFileLogging(enabled: false)
         if CommandLine.arguments.contains("--benchmark") {
             PerformanceChecks.run()
             return

@@ -15,9 +15,14 @@ public enum JevLog {
     private static let maxFileBytes: UInt64 = 512_000
 
     private final class RingBox: @unchecked Sendable {
+        var fileLoggingEnabled = true
         var lines: [String] = []
         var onceKeys: Set<String> = []
         var lastThrottled: [String: Date] = [:]
+    }
+
+    public static func configureFileLogging(enabled: Bool) {
+        queue.sync { ringBox.fileLoggingEnabled = enabled }
     }
 
     public static func info(_ message: String) {
@@ -81,7 +86,7 @@ public enum JevLog {
             if ringBox.lines.count > ringLimit {
                 ringBox.lines.removeFirst(ringBox.lines.count - ringLimit)
             }
-            guard toFile else { return }
+            guard toFile, ringBox.fileLoggingEnabled else { return }
             persistLine(line)
         }
     }

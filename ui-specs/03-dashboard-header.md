@@ -73,3 +73,7 @@ XCTAssertTrue(window.staticTexts["授权级别"].exists)
 window.buttons["进程"].click()
 XCTAssertTrue(window.searchFields.firstMatch.exists)
 ```
+
+### Jev 治理状态
+
+底栏治理状态显示候选与请求阶段：负载未达到条件、持续负载观察、无可治理应用、候选未满足空闲/占用条件、评估阶段 1/2 或 2/2、错误等待重试、动作后观察。黄色压力不等同于存在可退出候选；失败冷却期间显示失败原因。详见 [JevDecisionPipeline](JevDecisionPipeline/README.md)。

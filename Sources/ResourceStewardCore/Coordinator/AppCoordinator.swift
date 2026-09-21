@@ -25,7 +25,8 @@ public final class AppCoordinator: ObservableObject {
 
     public let store: LocalStore
     public let executor = ActionExecutor()
-    public let jevAdvisor = JevReclaimAdvisor()
+    public let jevAdvisor: JevReclaimAdvisor
+    @Published public private(set) var jevAPIKeyStatus = "未配置"
 
     private let monitor = SystemMonitor()
     private let pressureMonitor = MemoryPressureMonitor()
@@ -43,6 +44,14 @@ public final class AppCoordinator: ObservableObject {
 
     public init(store: LocalStore) {
         self.store = store
+        self.jevAdvisor = JevReclaimAdvisor(apiKeyProvider: { nil })
+        do {
+            let key = try store.loadJevAPIKey()
+            self.jevAdvisor.updateAPIKey(key)
+            self.jevAPIKeyStatus = key == nil ? "未配置" : "已配置（SQLite）"
+        } catch {
+            self.jevAPIKeyStatus = "读取 Key 失败：\(error.localizedDescription)"
+        }
         self.settings = store.loadSettings()
         self.blacklist = store.loadBlacklist()
         self.jevAdvisor.updateEnabled(self.settings.jevReclaimEnabled)
@@ -57,6 +66,16 @@ public final class AppCoordinator: ObservableObject {
 
     public convenience init() throws {
         try self.init(store: LocalStore())
+    }
+
+    public func saveJevAPIKey(_ value: String) throws {
+        try store.saveJevAPIKey(value)
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        jevAdvisor.updateAPIKey(key)
+        jevAPIKeyStatus = key.isEmpty ? "未配置" : "已配置（SQLite）"
+        pendingBatch = nil
+        autoStatusText = key.isEmpty ? "Jev 未配置 API Key" : "Key 已更新，等待下一次评估"
+        if isRunning { refresh() }
     }
 
     public func start() {
@@ -300,7 +319,7 @@ public final class AppCoordinator: ObservableObject {
         if Date() >= nextDecisionAt {
             batch = jevAdvisor.syncBatch(load: observedLoad, apps: grayApps)
         } else {
-            batch = .empty
+            batch = JevBatchSnapshot(signature: "", status: .actionCooldown)
         }
         var grouped = overlayBatchActions(groups: tick.groups, actions: batch.actions)
 
@@ -843,23 +862,24 @@ public final class AppCoordinator: ObservableObject {
     ) -> [PendingDecisionItem] {
         var items: [PendingDecisionItem] = []
         let ranked = groups.sorted {
-            let left = batch.evidence[$0.primary.snapshot.bundleID ?? $0.score.bundleID]?.candidateScore ?? 0
-            let right = batch.evidence[$1.primary.snapshot.bundleID ?? $1.score.bundleID]?.candidateScore ?? 0
+            let leftID = JevHardGate.Candidate(group: $0, favorites: settings.favoriteBundleIDs).bundleID
+            let rightID = JevHardGate.Candidate(group: $1, favorites: settings.favoriteBundleIDs).bundleID
+            let left = batch.evidence[leftID]?.candidateScore ?? 0
+            let right = batch.evidence[rightID]?.candidateScore ?? 0
             return left == right ? $0.key < $1.key : left > right
         }
         for group in ranked {
-            let bundle = group.primary.snapshot.bundleID ?? group.score.bundleID
-            let root = ProcessFamily.rootBundleID(from: bundle) ?? bundle
-            let action = (batch.actions[bundle] ?? batch.actions[root] ?? .none).withoutFreeze()
-            guard action.isActable else { continue }
             let candidate = JevHardGate.Candidate(group: group, favorites: settings.favoriteBundleIDs)
+            let bundle = candidate.bundleID
+            let action = (batch.actions[bundle] ?? .none).withoutFreeze()
+            guard action.isActable else { continue }
             guard JevHardGate.isGrayZone(candidate) else { continue }
             if action == .throttle, group.members.allSatisfy({ $0.appliedAction == .throttle }) { continue }
             if action == .quit, group.idleSeconds < 300 {
                 continue
             }
             guard actionCooldown.allows(group.key, at: Date()) else { continue }
-            guard let evidence = batch.evidence[bundle] ?? batch.evidence[root] else { continue }
+            guard let evidence = batch.evidence[bundle] else { continue }
             items.append(PendingDecisionItem(group: group, action: action, evidence: evidence))
             break
         }
@@ -914,6 +934,7 @@ public final class AppCoordinator: ObservableObject {
         if !jevAdvisor.isActive {
             return "配置 Jev API Key 并启用后，才会按负载给出建议"
         }
+        if let status = batch.status { return status.message }
         if batch.pending {
             return "正在根据当前负载询问 Jev…"
         }

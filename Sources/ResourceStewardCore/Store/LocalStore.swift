@@ -36,6 +36,28 @@ public final class LocalStore: @unchecked Sendable {
 
     
 
+    public func loadJevAPIKey() throws -> String? {
+        try queue.sync {
+            let key = try stringLocked("SELECT value FROM settings WHERE key = 'jev.apiKey'")?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return key?.isEmpty == false ? key : nil
+        }
+    }
+
+    public func saveJevAPIKey(_ value: String) throws {
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        try queue.sync {
+            if key.isEmpty {
+                try execLocked("DELETE FROM settings WHERE key = 'jev.apiKey'")
+            } else {
+                try execLocked(
+                    "INSERT INTO settings(key, value) VALUES('jev.apiKey', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    bind: { stmt in bindText(stmt, 1, key) }
+                )
+            }
+        }
+    }
+
     public func loadSettings() -> AppSettings {
         queue.sync {
             guard let json = try? stringLocked("SELECT value FROM settings WHERE key = 'app'") else {
@@ -537,8 +559,13 @@ public final class LocalStore: @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
         bind?(stmt)
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        var result = sqlite3_step(stmt)
+        while result == SQLITE_ROW {
             row(stmt)
+            result = sqlite3_step(stmt)
+        }
+        guard result == SQLITE_DONE else {
+            throw StoreError.execFailed(sql, messageLocked())
         }
     }
 

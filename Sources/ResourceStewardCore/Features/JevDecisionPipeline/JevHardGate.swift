@@ -49,15 +49,22 @@ public enum JevHardGate: Sendable {
         }
 
         public init(group: ProcessGroupViewModel, favorites: Set<String>, windowOwnerPIDs: Set<Int32>? = nil) {
-            let primary = group.primary.snapshot
+            let main = group.members.first {
+                $0.snapshot.bundleID == group.key
+                    && !ProcessFamily.isCompanion(bundleID: $0.snapshot.bundleID, processName: $0.snapshot.processName)
+            } ?? group.members.first {
+                !ProcessFamily.isCompanion(bundleID: $0.snapshot.bundleID, processName: $0.snapshot.processName)
+            }
+            let primary = (main ?? group.primary).snapshot
+            let identity = ProcessFamily.rootBundleID(from: primary.bundleID) ?? group.score.bundleID
             self.init(
                 pid: primary.pid,
-                bundleID: primary.bundleID ?? group.score.bundleID,
-                processName: group.displayName,
-                path: group.appPath ?? primary.path,
+                bundleID: identity,
+                processName: primary.processName,
+                path: main?.appPath ?? primary.path,
                 isForeground: group.isForeground,
-                isAccessory: group.isAccessory,
-                isRegularApp: group.isRegularApp,
+                isAccessory: main?.snapshot.isAccessory ?? group.isAccessory,
+                isRegularApp: main?.snapshot.isRegularApp ?? group.isRegularApp,
                 ownsWindows: group.ownsWindows,
                 inCurrentWorkspace: group.score.isInCurrentWorkspace,
                 isProtected: group.isProtected,

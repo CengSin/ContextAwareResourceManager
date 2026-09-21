@@ -22,7 +22,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
     public init(
         enabled: Bool = false,
         client: any JevClientProtocol = JevURLSessionClient(),
-        apiKeyProvider: @escaping () -> String? = { JevAPIKey.loadAPIKey() },
+        apiKeyProvider: @escaping () -> String?,
         baseURLString: String = JevURLSessionClient.defaultBaseURLString,
         model: String = JevURLSessionClient.defaultModel
     ) {
@@ -38,13 +38,18 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         isEnabled && apiKeyProvider() != nil
     }
 
+    public func updateAPIKey(_ value: String?) {
+        let key = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        invalidateBatch()
+        apiKeyProvider = { key?.isEmpty == false ? key : nil }
+    }
+
     public func updateEnabled(_ enabled: Bool) {
         let was = isEnabled
         isEnabled = enabled
         if was != enabled {
             invalidateBatch()
-            let source = JevAPIKey.load().source.rawValue
-            JevLog.info("enabled_updated enabled=\(enabled) api_key_source=\(source)")
+            JevLog.info("enabled_updated enabled=\(enabled)")
         }
     }
 
@@ -121,11 +126,19 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                 desiredBatchSignature = signature
             }
         }
-        guard !capped.isEmpty else { return .empty }
+        guard !capped.isEmpty else {
+            let status = JevPipelineStatus.idle(load: load, grayAppCount: apps.count)
+            JevLog.infoThrottled(key: "selection_\(status.code)", interval: 60,
+                "request_skipped reason=\(status.code) gray=\(apps.count) pressure=\(load.memory_pressure) memory_seconds=\(Int(load.memory_pressure_seconds)) cpu_seconds=\(Int(load.cpu_pressure_seconds))")
+            return JevBatchSnapshot(signature: signature, status: status)
+        }
         let cached = latestBatch()
         if cached.signature == signature, !cached.actions.isEmpty { return cached }
         if scheduleIfNeeded { scheduleBatch(load: load, apps: capped, signature: signature) }
-        return JevBatchSnapshot(signature: signature, pending: true)
+        return withState {
+            if lastBatch.signature == signature { return lastBatch }
+            return JevBatchSnapshot(signature: signature, pending: true, status: .assessing)
+        }
     }
 
     private func scheduleBatch(load: JevLoadState, apps: [JevGrayApp], signature: String) {
@@ -138,7 +151,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
             batchInFlight = true
             lastBatch = JevBatchSnapshot(
                 signature: signature,
-                pending: true
+                pending: true,
+                status: .assessing
             )
             return false
         }
@@ -147,7 +161,8 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         guard let apiKey = apiKeyProvider(), !apiKey.isEmpty else {
             withState {
                 batchInFlight = false
-                lastBatch = JevBatchSnapshot(signature: signature)
+                lastBatch = JevBatchSnapshot(signature: signature, status: .failed(JevClientError.missingAPIKey.localizedDescription))
+                lastBatchAt = Date()
             }
             JevLog.infoThrottled(key: "missing_api_key", interval: 120, "ERROR missing_api_key batch")
             return
@@ -165,6 +180,7 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
         let model = self.model
         Task.detached { [weak self] in
             guard let self else { return }
+            var stage = "assessment"
             do {
                 let stateJSON = try JSONEncoder().encode(state)
                 let questionsJSON = try JSONSerialization.data(
@@ -179,7 +195,14 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                     model: model
                 )
                 let assessment = try JevAssessmentQuestions.parse(assessmentPayload.answersJSON, apps: apps)
-                guard self.withState({ self.batchEpoch == epoch && self.desiredBatchSignature == signature }) else { return }
+                guard self.withState({ () -> Bool in
+                    guard self.batchEpoch == epoch && self.desiredBatchSignature == signature else { return false }
+                    self.lastBatch.status = .deciding
+                    return true
+                }) else { return }
+                JevLog.info("stage_ok request_id=\(requestID) stage=assessment status=\(assessmentPayload.httpStatus) latency_ms=\(assessmentPayload.latencyMs)")
+                stage = "decision"
+                JevLog.info("stage_start request_id=\(requestID)-decision stage=decision")
                 let decisionState = JevDecisionState(observations: state, assessment: assessment)
                 let payload = try await client.evaluatePayload(
                     stateJSON: JSONEncoder().encode(decisionState),
@@ -216,12 +239,12 @@ public final class JevReclaimAdvisor: @unchecked Sendable {
                     guard self.batchEpoch == epoch, self.desiredBatchSignature == signature else { return false }
                     self.batchInFlight = false
                     self.lastBatchAt = Date()
-                    self.lastBatch = JevBatchSnapshot(signature: signature, pending: false)
+                    self.lastBatch = JevBatchSnapshot(signature: signature, pending: false, status: .failed(error.localizedDescription))
                     return true
                 }
                 guard accepted else { return }
                 JevLog.error(
-                    "request_fail request_id=\(requestID) batch message=\(error.localizedDescription)"
+                    "request_fail request_id=\(requestID) batch stage=\(stage) message=\(error.localizedDescription)"
                 )
                 let handler = self.withState { self.onBatchResolved }
                 handler?()

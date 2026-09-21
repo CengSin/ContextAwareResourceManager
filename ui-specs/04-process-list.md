@@ -104,3 +104,5 @@ filterToggle.click()
 ### Jev 建议来源
 
 列表建议来自 [JevDecisionPipeline](JevDecisionPipeline/README.md)：本地按持续负载筛选候选，Score/Noul 评估后由第二次 Choice 请求选择受限动作。未通过保护、候选条件、语义门槛或置信度校验时保留。
+
+- 应用族向 Jev 提交主应用 Bundle ID 与主应用属性，Helper 的内存并入整组；占用最大的 Renderer 不会让整组被当作独立 Helper 过滤。无主应用的 Helper 组、前台及常用保活对象继续受保护。
