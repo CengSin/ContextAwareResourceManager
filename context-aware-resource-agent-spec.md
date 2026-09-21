@@ -207,18 +207,16 @@ score >= 85           → .quit       （仅当 App 无未保存内容提示时�
 
 ### 5.4 授权级别与自动执行
 
-决策者是 Jev，不是场景匹配，也不是本地分数阈值。
+本地算法筛选候选并限定动作，Jev 分两阶段评估并选择，代码负责实时保护与执行。
 
-1. 采样系统负载（内存压力、CPU、内存占用）和正在运行的应用族
-2. 本地划灰区：排除前台、保护进程、VPN/VM、会议/录屏、IM、输入法/辅助、常用、accessory、非用户 App
-3. 把负载 + 灰区名单（最多 12 个，按内存）一次交给 Jev；每个 App 选择 `keep` / `throttle` / `quit`。不确定或失败 → 保留
-4. **Level 0**：Jev 给出降级/退出后弹出独立确认窗口（不依赖菜单栏面板打开），用户确认才执行
-5. **Level 1**：同一套决策自动执行（自动退出要求空闲至少约 30 秒），完成后发系统通知
-6. **Level 2**：不可用，写入配置会回退到 Level 0
+1. 内存压力持续 20 秒或全机 CPU ≥80% 持续 30 秒后，按独立的内存/CPU 候选条件选取最多 5 个应用。
+2. 第一阶段评估两个负载 Score，以及每个应用的工作关联、持续后台用途 Noul。
+3. 第二阶段显式读取第一次的结果，用 Choice 从允许动作中选择保留、降优先级或退出。
+4. Level 0 每次展示一个建议及其观测和判断，确认后执行。Level 1 使用相同决策自动执行并通知。
+5. 每次动作后等待至少 30 秒并重新评估，同一应用尝试冷却 90 秒；退出候选至少 5 分钟未到前台。
+6. Level 2 不可用。硬门排除前台、保护进程、VPN/VM、会议/录屏、IM、输入法/辅助、常用、accessory、非用户应用。
 
-工作场景匹配、切场景冻结、分类表自动回收不再驱动动作。
-
-灰区硬门（不进 Jev 名单）：前台、保护进程、VPN/VM、会议/录屏、IM、输入法/辅助、常用、菜单栏 accessory、非用户 App。有窗口可以进灰区。
+完整算法、问题、阈值和验证参见 [JevDecisionPipeline](ui-specs/JevDecisionPipeline/README.md)。
 
 ### 5.6 进程族（Helper / Renderer）
 
@@ -241,13 +239,11 @@ Safari 的 `com.apple.WebKit.WebContent` 会被多个 App 共用，不并入 Saf
 
 ### 5.7 Jev 灰区回收（TypeSafe System One）
 
-Jev 是决策模型，不是 agent：只返回 typed Choice，不发信号。代码保持控制流和硬门。
+Jev 通过 `evaluatePayload` 接收两次顺序请求；默认模型 `jev-latest`。第一阶段 Score/Noul 的真实返回值传入第二阶段 Choice。任何阶段失败或信息不足均保留。
 
-**一次请求**：state 含当前负载（压力、CPU、内存、前台 App）+ 灰区运行中 App 列表（空闲、占用、是否有窗）。每个 App 一个 Choice：`keep` / `throttle` / `quit`。冻结已停用，模型若仍返回 freeze，本地夹成 throttle。
+两个 Noul 均 ≤0.2；对应负载 Score ≥2、confidence ≥0.7；动作 confidence 达到 quit ≥0.9 或 throttle ≥0.8 才可执行，同时必须在本地允许动作内。数值、类型和 Score 分布需要通过校验。
 
-**合成**：confidence < 0.7 → 保留；`quit` 且 confidence < 0.85 → 降为 throttle。失败、超时、pending → 全部保留。
-
-**有窗口也可以问**；有窗不再是咨询禁令。退出走 `terminate()`。
+批量结果按负载、前台、候选身份和允许动作等签名复用，最多 180 秒；配置或签名变化时失效，两阶段都拒绝过期响应。退出使用 `terminate()`；无冻结或强杀。
 
 ---
 
@@ -283,7 +279,7 @@ Jev 是决策模型，不是 agent：只返回 typed Choice，不发信号。代
 ## 8. 版本路线
 
 ### 8.1 当前
-- 负载 + 灰区运行中 App 一次交给 Jev
+- 本地候选筛选 → Jev Score/Noul → Jev Choice，两阶段顺序请求
 - 动作：保留 / 降优先级 / 退出（无冻结）
 - Level 0 独立窗口确认；Level 1 自动执行并发系统通知
 

@@ -3,8 +3,8 @@
 ## 浮动确认弹窗
 - 用户称呼：确认弹窗、处理确认窗口、Jev 决策确认框、Confirm Dialog
 - 入口：Level 0 模式下触发治理动作，或 Jev 批量决策建议生成时，系统居中弹出独立浮动窗口
-- 关键选择器：`window "确认建议" of application "ResourceSteward"` (subrole=`AXStandardWindow`, 尺寸 380x220 pt)；单项标题: `AXStaticText` (`pending.action.confirmationTitle`)；批量标题: `AXStaticText "Jev 建议按当前负载处理这些应用"`；取消按钮: `button "取消"` / `button "暂不处理"` (快捷键: `Escape`)；执行按钮: `button "确认执行"` (快捷键: `Return`，退出动作为红色高亮)
-- 子功能：单应用处理二次确认与破坏性动作安全警告、Jev 批量建议清单汇总展示、Helper 与主应用联动说明、全键盘快捷键支持（Esc 取消 / Enter 确认）、窗口关闭拦截（防止状态锁死）
+- 关键选择器：`window "确认建议" of application "ResourceSteward"` (subrole=`AXStandardWindow`, 宽 380 pt，高度随内容调整)；单项标题: `AXStaticText` (`pending.action.confirmationTitle`)；批量标题: `AXStaticText "Jev 建议处理此应用"`；取消按钮: `button "取消"` / `button "暂不处理"` (快捷键: `Escape`)；执行按钮: `button "确认执行"` (快捷键: `Return`，退出动作为红色高亮)
+- 子功能：单应用处理二次确认与破坏性动作安全警告、Jev 单项建议与负载、观测及判断展示、Helper 与主应用联动说明、全键盘快捷键支持（Esc 取消 / Enter 确认）、窗口关闭拦截（防止状态锁死）
 - 前置条件：系统处于 Level 0（仅建议）模式，存在待处理的单项操作或 Jev 批次决策
 - 常见故障现象：按快捷键没反应 → 弹窗失去焦点，点击弹窗重新激活即可；点击“确认执行”后目标应用没反应 → 目标应用已在前台被激活或用户正在编辑，安全熔断机制生效
 
@@ -28,11 +28,11 @@
 
 | 控件名称 | 控件类型 (SwiftUI) | macOS AX 角色 | 定位方式 / 选择器 | 可视内容 / 文本 | 交互说明 |
 |---|---|---|---|---|---|
-| 批次标题 | `Text("Jev 建议按当前负载处理这些应用")` | `AXStaticText` | 弹窗顶部标题 | `"Jev 建议按当前负载处理这些应用"` | 告知大模型推荐建议 |
+| 批次标题 | `Text("Jev 建议处理此应用")` | `AXStaticText` | 弹窗顶部标题 | `"Jev 建议处理此应用"` | 告知大模型推荐建议 |
 | 原则说明文案 | `Text("降低优先级不会回收内存...")` | `AXStaticText` | 副标题提示 | 明确声明内存回收机制与降优先级差异 | 诚实降级告知 |
-| 建议清单列表 | `ForEach(batch.items)` | `AXGroup` | 逐行展示 | 左侧应用名，右侧彩色动作标签 (`"降优先级"` / `"退出"`) | 批量审查候选列表 |
+| 建议清单列表 | `ForEach(batch.items)` | `AXGroup` | 逐行展示 | 左侧应用名，右侧彩色动作标签 (`"降优先级"` / `"退出"`) | 每次审查一个最高优先级候选 |
 | 暂不处理按钮 | `Button("暂不处理")` | `AXButton` | `button "暂不处理"` (快捷键: `Esc`) | `"暂不处理"` | 放弃本次批次建议 |
-| 确认执行按钮 | `Button("确认执行")` | `AXButton` | `button "确认执行"` (快捷键: `Enter`) | `"确认执行"` | 一并执行批量治理指令 |
+| 确认执行按钮 | `Button("确认执行")` | `AXButton` | `button "确认执行"` (快捷键: `Enter`) | `"确认执行"` | 复核后执行当前建议 |
 
 ---
 
@@ -62,3 +62,7 @@ if dialog.waitForExistence(timeout: 2.0) {
     confirmBtn.click()
 }
 ```
+
+### Jev 判断摘要
+
+每次展示一个建议，含内存/CPU 紧迫度、评估时的空闲与内存观测、两个 Noul 语义判断和动作置信度。退出时提示会话状态未知。选择器与逐个处理规则见 [JevDecisionPipeline](JevDecisionPipeline/README.md)。

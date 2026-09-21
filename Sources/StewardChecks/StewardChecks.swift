@@ -10,6 +10,15 @@ enum StewardChecks {
             PerformanceChecks.run()
             return
         }
+        if CommandLine.arguments.contains("--jev-pipeline") {
+            let failures = try JevChecks.run()
+            if !failures.isEmpty {
+                print("Failed: " + failures.joined(separator: ", "))
+                exit(1)
+            }
+            print("All Jev pipeline checks passed.")
+            return
+        }
         var failures: [String] = []
         func check(_ name: String, _ condition: @autoclosure () -> Bool) {
             if condition() {

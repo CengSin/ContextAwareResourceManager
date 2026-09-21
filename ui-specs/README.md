@@ -76,13 +76,13 @@ flowchart TD
 - 关键选择器：`button "设置" of window 1`；授权单选按钮: `button` containing `"仅建议 (Level 0)"` / `button` containing `"半自动 (Level 1)"`；滑块: `slider 1` (AXRole=`AXSlider`, 范围 2-10s)；Jev 开关: `checkbox "启用 Jev 灰区判断"`；预设按钮: `button "TypeSafe"`, `button "OpenRouter"`；输入框: `text field "Base URL"`, `text field "模型"`, `secure text field "API Key"`；操作按钮: `button "保存到钥匙串"`, `button "清除 Key"`；存储路径: `AXStaticText` (SQLite 路径)
 - 子功能：授权模式切换（Level 0 手动弹窗确认 vs Level 1 自动执行通知）、采样间隔微调滑块（2s ~ 10s）、Jev 大模型灰区决策总开关、供应商一键预设套用（TypeSafe / OpenRouter）、自定义 API 端点与模型名称、API Key 安全存取至系统 Keychain（支持保存与清除）、本地 SQLite 存储文件物理路径展示与复制
 - 前置条件：macOS 钥匙串（Keychain）可用；网络可访问对应大模型 API 端点
-- 常见故障现象：保存 API Key 报错 → 钥匙串访问权限被拒或沙盒阻拦；Jev 建议不出现 → Jev 开关未打开、API Key 未配置或网络不通导致降级回本地打分
+- 常见故障现象：保存 API Key 报错 → 钥匙串访问权限被拒或沙盒阻拦；Jev 建议不出现 → Jev 开关未打开、API Key 未配置或网络不通时保留
 
 ## 浮动确认弹窗
 - 用户称呼：确认弹窗、处理确认窗口、Jev 决策确认框、Confirm Dialog
 - 入口：Level 0 模式下触发治理动作，或 Jev 批量决策建议生成时，系统居中弹出独立浮动窗口
-- 关键选择器：`window "确认建议" of application "ResourceSteward"` (subrole=`AXStandardWindow`, 尺寸 380x220 pt)；单项标题: `AXStaticText` (`pending.action.confirmationTitle`)；批量标题: `AXStaticText "Jev 建议按当前负载处理这些应用"`；取消按钮: `button "取消"` / `button "暂不处理"` (快捷键: `Escape`)；执行按钮: `button "确认执行"` (快捷键: `Return`，退出动作为红色高亮)
-- 子功能：单应用处理二次确认与破坏性动作安全警告、Jev 批量建议清单汇总展示、Helper 与主应用联动说明、全键盘快捷键支持（Esc 取消 / Enter 确认）、窗口关闭拦截（防止状态锁死）
+- 关键选择器：`window "确认建议" of application "ResourceSteward"` (subrole=`AXStandardWindow`, 宽 380 pt，高度随内容调整)；单项标题: `AXStaticText` (`pending.action.confirmationTitle`)；批量标题: `AXStaticText "Jev 建议处理此应用"`；取消按钮: `button "取消"` / `button "暂不处理"` (快捷键: `Escape`)；执行按钮: `button "确认执行"` (快捷键: `Return`，退出动作为红色高亮)
+- 子功能：单应用处理二次确认与破坏性动作安全警告、Jev 单项建议与负载、观测及判断展示、Helper 与主应用联动说明、全键盘快捷键支持（Esc 取消 / Enter 确认）、窗口关闭拦截（防止状态锁死）
 - 前置条件：系统处于 Level 0（仅建议）模式，存在待处理的单项操作或 Jev 批次决策
 - 常见故障现象：按快捷键没反应 → 弹窗失去焦点，点击弹窗重新激活即可；点击“确认执行”后目标应用没反应 → 目标应用已在前台被激活或用户正在编辑，安全熔断机制生效
 
@@ -108,3 +108,14 @@ flowchart TD
 6. [06. 设置与 Jev AI 配置面板 (Settings Tab)](file:///Users/cengsin/agent-projects/ContextAwareResourceManager/ui-specs/06-settings-view.md)
 7. [07. 浮动确认弹窗 (Confirm Prompt Panel)](file:///Users/cengsin/agent-projects/ContextAwareResourceManager/ui-specs/07-confirm-panel.md)
 8. [08. 系统通知与后台自动调度 (Reclaim Notifier)](file:///Users/cengsin/agent-projects/ContextAwareResourceManager/ui-specs/08-notifications.md)
+
+## Feature 文档
+
+- [JevDecisionPipeline：候选筛选、两阶段判断与授权执行](JevDecisionPipeline/README.md)
+
+### Feature 开发流程
+
+1. 使用稳定的 PascalCase feature 名称；新功能专属文件保存在 `Sources/<Target>/Features/<FeatureName>/`，检查保存在 `Sources/StewardChecks/Features/<FeatureName>/`，跨 target 同名。
+2. 开发新功能时同步创建 `ui-specs/<FeatureName>/README.md`，并更新本索引及关联页面文档。
+3. 文档包含入口、可见控件、选择器、行为规则、错误处理和验证方式；共享入口只接线，功能实现按职责拆文件。
+4. 执行构建、对应行为检查、注释检查；文档始终反映当前实现。

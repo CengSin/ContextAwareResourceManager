@@ -18,7 +18,7 @@ struct ConfirmPromptView: View {
 
     private func batchBody(_ batch: PendingDecisionBatch) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Jev 建议按当前负载处理这些应用")
+            Text("Jev 建议处理此应用")
                 .font(.headline)
             Text("降低优先级不会回收内存；退出才会让系统回收占用。")
                 .font(.caption)
@@ -26,15 +26,7 @@ struct ConfirmPromptView: View {
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(batch.items) { item in
-                    HStack {
-                        Text(item.group.displayName)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                        Spacer()
-                        Text(item.action.title)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Theme.actionColor(item.action))
-                    }
+                    JevDecisionSummaryView(item: item)
                 }
             }
             HStack {

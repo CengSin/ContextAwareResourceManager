@@ -100,3 +100,7 @@ filterToggle.click()
 | 运行应用列表合并 | 108.866 ms | 7.036 ms |
 
 前后结果校验值均为 `282303`。首轮打分为 84.749 ms，缓存热身后的收益更大。以上仅反映固定输入的计算开销，不代表整机 CPU、界面渲染或持久化开销的同比变化。
+
+### Jev 建议来源
+
+列表建议来自 [JevDecisionPipeline](JevDecisionPipeline/README.md)：本地按持续负载筛选候选，Score/Noul 评估后由第二次 Choice 请求选择受限动作。未通过保护、候选条件、语义门槛或置信度校验时保留。

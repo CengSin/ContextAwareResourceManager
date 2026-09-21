@@ -37,8 +37,9 @@ public final class AppCoordinator: ObservableObject {
     private var lastPersistAt = Date.distantPast
     private var lastPruneAt = Date.distantPast
     private var actionCooldown = ActionAttemptCooldown()
+    private var decisionLoadWindow = JevLoadWindow()
+    private var nextDecisionAt = Date.distantPast
     private var lastPersistedFrozenSignature: Set<String> = []
-    private var dismissedBatchSignature = ""
 
     public init(store: LocalStore) {
         self.store = store
@@ -76,6 +77,7 @@ public final class AppCoordinator: ObservableObject {
 
     public func stop() {
         jevAdvisor.invalidateBatch()
+        decisionLoadWindow = JevLoadWindow()
         let failures = executor.thawAll()
         if !failures.isEmpty {
             lastMessage = failures.map(\.message).joined(separator: "；")
@@ -293,7 +295,13 @@ public final class AppCoordinator: ObservableObject {
             favorites: settings.favoriteBundleIDs,
             windowOwnerPIDs: tick.windowOwnerPIDs
         )
-        let batch = jevAdvisor.syncBatch(load: load, apps: grayApps)
+        let observedLoad = decisionLoadWindow.observe(load)
+        let batch: JevBatchSnapshot
+        if Date() >= nextDecisionAt {
+            batch = jevAdvisor.syncBatch(load: observedLoad, apps: grayApps)
+        } else {
+            batch = .empty
+        }
         var grouped = overlayBatchActions(groups: tick.groups, actions: batch.actions)
 
         hostMemory = tick.host
@@ -423,7 +431,7 @@ public final class AppCoordinator: ObservableObject {
         pendingBatch = nil
         guard jevAdvisor.isActive else { return }
         let live = jevAdvisor.latestBatch()
-        let current = actionableItems(from: processGroups, actions: live.actions)
+        let current = actionableItems(from: processGroups, batch: live)
         let approved = Set(batch.items.map(decisionIdentity))
         var okCount = 0
         executor.extraKeepAliveBundleIDs = settings.favoriteBundleIDs
@@ -445,6 +453,8 @@ public final class AppCoordinator: ObservableObject {
                 )
             }
         }
+        nextDecisionAt = Date().addingTimeInterval(30)
+        jevAdvisor.invalidateBatch()
         lastMessage = okCount > 0 ? "已按建议处理 \(okCount) 个应用。" : "没有成功执行的建议。"
         lastMessageIsError = okCount == 0
         frozen = executor.frozenProcesses
@@ -454,7 +464,9 @@ public final class AppCoordinator: ObservableObject {
 
     public func cancelPendingBatch() {
         if let batch = pendingBatch {
-            dismissedBatchSignature = batch.id
+            for item in batch.items { actionCooldown.record(item.group.key, at: Date()) }
+            nextDecisionAt = Date().addingTimeInterval(30)
+            jevAdvisor.invalidateBatch()
         }
         pendingBatch = nil
     }
@@ -807,7 +819,7 @@ public final class AppCoordinator: ObservableObject {
             pendingBatch = nil
             return
         }
-        let items = actionableItems(from: groups, actions: batch.actions)
+        let items = actionableItems(from: groups, batch: batch)
         guard !items.isEmpty else { pendingBatch = nil; return }
         let signature = items.map(decisionIdentity).sorted().joined(separator: "|")
         if settings.authorizationLevel == .sceneSwitch {
@@ -817,7 +829,7 @@ public final class AppCoordinator: ObservableObject {
             if pendingAction == nil {
                 executeAutoItems(items, now: now)
             }
-        } else if pendingAction == nil, signature != dismissedBatchSignature, pendingBatch?.id != signature {
+        } else if pendingAction == nil, pendingBatch?.id != signature {
             pendingBatch = PendingDecisionBatch(id: signature, items: items)
             JevLog.info(
                 "confirm_pending_set items=\(items.map { "\($0.group.key)=\($0.action.rawValue)" }.joined(separator: ","))"
@@ -827,23 +839,29 @@ public final class AppCoordinator: ObservableObject {
 
     private func actionableItems(
         from groups: [ProcessGroupViewModel],
-        actions: [String: SuggestedAction]
+        batch: JevBatchSnapshot
     ) -> [PendingDecisionItem] {
         var items: [PendingDecisionItem] = []
-        for group in groups {
+        let ranked = groups.sorted {
+            let left = batch.evidence[$0.primary.snapshot.bundleID ?? $0.score.bundleID]?.candidateScore ?? 0
+            let right = batch.evidence[$1.primary.snapshot.bundleID ?? $1.score.bundleID]?.candidateScore ?? 0
+            return left == right ? $0.key < $1.key : left > right
+        }
+        for group in ranked {
             let bundle = group.primary.snapshot.bundleID ?? group.score.bundleID
             let root = ProcessFamily.rootBundleID(from: bundle) ?? bundle
-            let action = (actions[bundle] ?? actions[root] ?? .none).withoutFreeze()
+            let action = (batch.actions[bundle] ?? batch.actions[root] ?? .none).withoutFreeze()
             guard action.isActable else { continue }
             let candidate = JevHardGate.Candidate(group: group, favorites: settings.favoriteBundleIDs)
             guard JevHardGate.isGrayZone(candidate) else { continue }
             if action == .throttle, group.members.allSatisfy({ $0.appliedAction == .throttle }) { continue }
-            if settings.authorizationLevel == .sceneSwitch, action == .quit, group.idleSeconds < 30 {
+            if action == .quit, group.idleSeconds < 300 {
                 continue
             }
             guard actionCooldown.allows(group.key, at: Date()) else { continue }
-            items.append(PendingDecisionItem(group: group, action: action))
-            if items.count >= 6 { break }
+            guard let evidence = batch.evidence[bundle] ?? batch.evidence[root] else { continue }
+            items.append(PendingDecisionItem(group: group, action: action, evidence: evidence))
+            break
         }
         return items
     }
@@ -852,6 +870,9 @@ public final class AppCoordinator: ObservableObject {
         _ items: [PendingDecisionItem],
         now: Date
     ) {
+        guard now >= nextDecisionAt else { return }
+        nextDecisionAt = now.addingTimeInterval(30)
+        jevAdvisor.invalidateBatch()
         var throttleCount = 0
         var quitCount = 0
         var names: [String] = []
@@ -934,15 +955,4 @@ public struct PendingAction: Identifiable, Equatable {
     public var id: String { group.id + "-" + action.rawValue }
     public let group: ProcessGroupViewModel
     public let action: SuggestedAction
-}
-
-public struct PendingDecisionItem: Identifiable, Equatable {
-    public var id: String { group.id + "-" + action.rawValue }
-    public let group: ProcessGroupViewModel
-    public let action: SuggestedAction
-}
-
-public struct PendingDecisionBatch: Identifiable, Equatable {
-    public let id: String
-    public let items: [PendingDecisionItem]
 }

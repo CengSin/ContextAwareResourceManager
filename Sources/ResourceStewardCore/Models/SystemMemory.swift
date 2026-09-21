@@ -167,7 +167,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         scoringRevision: Int = 1,
         jevReclaimEnabled: Bool = false,
         jevBaseURL: String = JevURLSessionClient.defaultBaseURLString,
-        jevModel: String = JevQuestions.defaultModel
+        jevModel: String = JevURLSessionClient.defaultModel
     ) {
         self.authorizationLevel = authorizationLevel
         self.weights = weights
@@ -230,7 +230,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
             try container.decodeIfPresent(String.self, forKey: .jevBaseURL)
         )
         jevModel = try container.decodeIfPresent(String.self, forKey: .jevModel)
-            ?? JevQuestions.defaultModel
+            ?? JevURLSessionClient.defaultModel
         var revision = try container.decodeIfPresent(Int.self, forKey: .scoringRevision) ?? 0
         if revision < 1 {
             

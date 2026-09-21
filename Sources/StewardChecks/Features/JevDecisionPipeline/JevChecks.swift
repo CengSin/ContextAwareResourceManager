@@ -14,115 +14,6 @@ enum JevChecks {
         }
 
         
-        let safeFreeze = JevEvaluationAnswers(
-            looksLikeNetworkOrSync: 0.1,
-            looksLikeCommunication: 0.1,
-            looksLikeInputOrA11y: 0.05,
-            looksLikeAVOrCapture: 0.05,
-            userLikelyNeedsSoon: 0.2,
-            safeToReclaimIdle: 0.9,
-            preferredAction: JevChoiceAnswer(choice: "freeze", confidence: 0.85)
-        )
-        let composedSafe = JevComposer.compose(safeFreeze)
-        check("compose freeze is retired to throttle", composedSafe.action == .throttle)
-
-        let midFreeze = JevEvaluationAnswers(
-            looksLikeNetworkOrSync: 0.1,
-            looksLikeCommunication: 0.1,
-            looksLikeInputOrA11y: 0.05,
-            looksLikeAVOrCapture: 0.05,
-            userLikelyNeedsSoon: 0.2,
-            safeToReclaimIdle: 0.9,
-            preferredAction: JevChoiceAnswer(choice: "freeze", confidence: 0.75)
-        )
-        let composedMidFreeze = JevComposer.compose(midFreeze)
-        check(
-            "compose freeze at 0.75 → throttle",
-            composedMidFreeze.action == .throttle
-        )
-
-        let midQuit = JevEvaluationAnswers(
-            looksLikeNetworkOrSync: 0.1,
-            looksLikeCommunication: 0.1,
-            looksLikeInputOrA11y: 0.05,
-            looksLikeAVOrCapture: 0.05,
-            userLikelyNeedsSoon: 0.2,
-            safeToReclaimIdle: 0.9,
-            preferredAction: JevChoiceAnswer(choice: "quit", confidence: 0.8)
-        )
-        check(
-            "compose quit below 0.85 → throttle",
-            JevComposer.compose(midQuit).action == .throttle && JevComposer.compose(midQuit).rule == .highStakesConfidence
-        )
-
-        let highRisk = JevEvaluationAnswers(
-            looksLikeNetworkOrSync: 0.8,
-            looksLikeCommunication: 0.1,
-            looksLikeInputOrA11y: 0.1,
-            looksLikeAVOrCapture: 0.1,
-            userLikelyNeedsSoon: 0.1,
-            safeToReclaimIdle: 0.95,
-            preferredAction: JevChoiceAnswer(choice: "freeze", confidence: 0.99)
-        )
-        check("compose risk gate → none", JevComposer.compose(highRisk).action == .none && JevComposer.compose(highRisk).rule == .risk)
-
-        let needsSoon = JevEvaluationAnswers(
-            looksLikeNetworkOrSync: 0.1,
-            looksLikeCommunication: 0.1,
-            looksLikeInputOrA11y: 0.1,
-            looksLikeAVOrCapture: 0.1,
-            userLikelyNeedsSoon: 0.7,
-            safeToReclaimIdle: 0.95,
-            preferredAction: JevChoiceAnswer(choice: "quit", confidence: 0.99)
-        )
-        check("compose needs_soon → none", JevComposer.compose(needsSoon).rule == .needsSoon)
-
-        let unsafe = JevEvaluationAnswers(
-            looksLikeNetworkOrSync: 0.1,
-            looksLikeCommunication: 0.1,
-            looksLikeInputOrA11y: 0.1,
-            looksLikeAVOrCapture: 0.1,
-            userLikelyNeedsSoon: 0.1,
-            safeToReclaimIdle: 0.4,
-            preferredAction: JevChoiceAnswer(choice: "freeze", confidence: 0.99)
-        )
-        check("compose safe_threshold → none", JevComposer.compose(unsafe).rule == .safeThreshold)
-
-        let lowConf = JevEvaluationAnswers(
-            looksLikeNetworkOrSync: 0.1,
-            looksLikeCommunication: 0.1,
-            looksLikeInputOrA11y: 0.1,
-            looksLikeAVOrCapture: 0.1,
-            userLikelyNeedsSoon: 0.1,
-            safeToReclaimIdle: 0.9,
-            preferredAction: JevChoiceAnswer(choice: "freeze", confidence: 0.5)
-        )
-        check("compose confidence → none", JevComposer.compose(lowConf).rule == .confidence)
-
-        
-        final class EvaluateCounter: @unchecked Sendable {
-            var value = 0
-        }
-        let evaluateCount = EvaluateCounter()
-        let mock = JevMockClient(
-            result: .success(
-                JevClientResult(
-                    requestID: "test",
-                    model: "jev-latest",
-                    answers: safeFreeze,
-                    httpStatus: 200,
-                    latencyMs: 1
-                )
-            ),
-            onEvaluate: { _ in evaluateCount.value += 1 }
-        )
-        let advisor = JevReclaimAdvisor(
-            enabled: true,
-            client: mock,
-            cache: JevCache(memoryOnly: true),
-            apiKeyProvider: { "test-key" }
-        )
-
         let wechat = JevHardGate.Candidate(
             pid: 1,
             bundleID: "com.tencent.xinWeChat",
@@ -137,18 +28,6 @@ enum JevChecks {
             windowOwnerPIDs: []
         )
         check("wechat hard-gated", JevHardGate.skipReason(for: wechat)?.0 == .categoryBan)
-        _ = advisor.adjustSuggestion(
-            scorerAction: .quit,
-            candidate: wechat,
-            pressure: .warning,
-            idleSeconds: 600,
-            memoryMB: 400,
-            cpuPercent: 1,
-            authorization: .suggestOnly,
-            alreadyFrozen: false
-        )
-        check("wechat never calls client", evaluateCount.value == 0)
-
         let notes = JevHardGate.Candidate(
             pid: 2,
             bundleID: "com.apple.Notes",
@@ -164,18 +43,6 @@ enum JevChecks {
         )
         let notesReason = JevHardGate.skipReason(for: notes)?.0
         check("notes hard-gated", notesReason == .categoryBan)
-        _ = advisor.adjustSuggestion(
-            scorerAction: .freeze,
-            candidate: notes,
-            pressure: .warning,
-            idleSeconds: 600,
-            memoryMB: 200,
-            cpuPercent: 0.5,
-            authorization: .suggestOnly,
-            alreadyFrozen: false
-        )
-        check("notes never calls client", evaluateCount.value == 0)
-
         let sublime = JevHardGate.Candidate(
             pid: 3,
             bundleID: "com.sublimetext.4",
@@ -218,9 +85,6 @@ enum JevChecks {
             "windowed sublime quit not clamped",
             JevHardGate.clampAction(.quit, for: windowedSublime) == .quit
         )
-        check("policy hint names owns_windows field", JevPolicyHint().note.contains("owns_windows"))
-        check("policy hint does not treat windowed as consult skip", !JevPolicyHint().note.contains("refused VPN, meeting, IM, a11y, windowed"))
-        check("policy hint says freeze disabled", JevPolicyHint().note.lowercased().contains("freeze"))
 
         check("chrome is third-party", InstalledAppCatalog.isThirdParty(bundleID: "com.google.Chrome"))
         check("safari is not third-party", !InstalledAppCatalog.isThirdParty(bundleID: "com.apple.Safari"))
@@ -248,44 +112,6 @@ enum JevChecks {
             ).needsReclassify
         )
 
-        check(
-            "batch compose keep",
-            JevBatchComposer.compose(choice: "keep", confidence: 0.9) == .none
-        )
-        check(
-            "batch compose throttle",
-            JevBatchComposer.compose(choice: "throttle", confidence: 0.8) == .throttle
-        )
-        check(
-            "batch compose quit high conf",
-            JevBatchComposer.compose(choice: "quit", confidence: 0.9) == .quit
-        )
-        check(
-            "batch compose quit mid conf → throttle",
-            JevBatchComposer.compose(choice: "quit", confidence: 0.8) == .throttle
-        )
-        check(
-            "batch compose freeze → throttle",
-            JevBatchComposer.compose(choice: "freeze", confidence: 0.95) == .throttle
-        )
-        check(
-            "batch compose low conf → keep",
-            JevBatchComposer.compose(choice: "throttle", confidence: 0.4) == .none
-        )
-        let batchApps = JevBatchQuestions.capped([
-            JevGrayApp(index: 0, bundle_id: "com.google.Chrome", name: "Chrome", idle_seconds: 400, memory_mb: 1800, cpu_percent: 1, owns_windows: true),
-            JevGrayApp(index: 1, bundle_id: "io.masscode.app", name: "massCode", idle_seconds: 800, memory_mb: 200, cpu_percent: 0.2, owns_windows: true)
-        ])
-        check("batch caps preserve memory order", batchApps.first?.bundle_id == "com.google.Chrome")
-        let parsed = JevBatchQuestions.parse(
-            answers: [
-                "app_0": ["choice": "quit", "confidence": 0.92],
-                "app_1": ["choice": "keep", "confidence": 0.8]
-            ],
-            apps: batchApps
-        )
-        check("batch parse chrome quit", parsed["com.google.Chrome"] == .quit)
-        check("batch parse mass keep", parsed["io.masscode.app"] == SuggestedAction.none)
         let wechatCandidate = JevHardGate.Candidate(
             pid: 9,
             bundleID: "com.tencent.xinWeChat",
@@ -319,47 +145,6 @@ enum JevChecks {
                 windowOwnerPIDs: []
             ).isEmpty
         )
-
-        
-        let json = """
-        {
-          "model": "jev-1.13.0",
-          "answers": {
-            "looks_like_network_or_sync": {"type":"noul","noul":0.1},
-            "looks_like_communication": {"type":"noul","noul":0.1},
-            "looks_like_input_or_a11y": {"type":"noul","noul":0.05},
-            "looks_like_av_or_capture": {"type":"noul","noul":0.05},
-            "user_likely_needs_soon": {"type":"noul","noul":0.2},
-            "safe_to_reclaim_idle": {"type":"noul","noul":0.9},
-            "preferred_action": {
-              "type":"choice",
-              "choice":"freeze",
-              "confidence":0.85,
-              "probabilities":{"none":0.05,"throttle":0.05,"freeze":0.85,"quit":0.05}
-            }
-          },
-          "usage": {"input_tokens": 100, "output_tokens": 20}
-        }
-        """.data(using: .utf8)!
-        let parsedResponse = try JevResponseParser.parse(data: json, requestID: "r1", httpStatus: 200, latencyMs: 12)
-        check("parser model", parsedResponse.model == "jev-1.13.0")
-        check("parser preferred freeze", parsedResponse.answers.preferredAction.choice == "freeze")
-        check("parser usage tokens", parsedResponse.usage.inputTokens == 100 && parsedResponse.usage.outputTokens == 20)
-
-        
-        do {
-            _ = try JevResponseParser.parse(
-                data: #"{"model":"jev-latest","answers":{}}"#.data(using: .utf8)!,
-                requestID: "bad",
-                httpStatus: 200,
-                latencyMs: 1
-            )
-            check("incomplete answers throw", false)
-        } catch let error as JevClientError {
-            check("incomplete answers throw", error == .incompleteAnswers)
-        } catch {
-            check("incomplete answers throw", false)
-        }
 
         
         let legacy = #"{"authorizationLevel":0,"weights":{},"matchingWindowMinutes":10,"matchingThreshold":0.6,"sampleIntervalSeconds":5,"hasCompletedOnboarding":true,"showOnlyActionable":false,"favoriteApps":[],"scoringRevision":1}"#
@@ -437,7 +222,7 @@ enum JevChecks {
         check("custom base URL kept", customBase.jevBaseURL == "https://gateway.example.com/custom")
         check(
             "settings migrate jevModel default",
-            decodedBase.jevModel == JevQuestions.defaultModel
+            decodedBase.jevModel == JevURLSessionClient.defaultModel
         )
 
         check("api key env var name", JevAPIKey.environmentVariable == "RESOURCE_STEWARD_JEV_API_KEY")
@@ -447,8 +232,8 @@ enum JevChecks {
         let batchAdvisor = JevReclaimAdvisor(enabled: true, client: controlled, apiKeyProvider: { "test-key" })
         let resolved = DispatchSemaphore(value: 0)
         batchAdvisor.setOnBatchResolved { resolved.signal() }
-        let app = JevGrayApp(index: 0, bundle_id: "com.example.test", name: "Test", idle_seconds: 120, memory_mb: 500, cpu_percent: 0, owns_windows: true, process_identity: "42:100")
-        let load = JevLoadState(memory_pressure: "critical", cpu_percent: 90, memory_used_ratio: 0.95, swap_used_mb: 100)
+        let app = JevGrayApp(index: 0, bundle_id: "com.example.test", name: "Test", idle_seconds: 600, memory_mb: 500, cpu_percent: 0, owns_windows: true, process_identity: "42:100")
+        let load = JevLoadState(memory_pressure: "critical", cpu_percent: 90, memory_used_ratio: 0.95, swap_used_mb: 100, memory_pressure_seconds: 30, cpu_pressure_seconds: 30)
         let first = batchAdvisor.syncBatch(load: load, apps: [app])
         check("first batch is pending with no actions", first.pending && first.actions.isEmpty)
         check("first batch request starts", controlled.started.wait(timeout: .now() + 2) == .success)
@@ -456,7 +241,7 @@ enum JevChecks {
         check("first batch resolves", resolved.wait(timeout: .now() + 2) == .success)
         check("resolved batch is reusable", batchAdvisor.syncBatch(load: load, apps: [app]).actions[app.bundle_id] == .quit)
         var changed = load
-        changed.memory_pressure = "normal"
+        changed.memory_pressure = "warning"
         let waiting = batchAdvisor.syncBatch(load: changed, apps: [app])
         check("new load never reuses old quit while pending", waiting.pending && waiting.actions.isEmpty && batchAdvisor.latestBatch().actions.isEmpty)
         check("second request starts", controlled.started.wait(timeout: .now() + 2) == .success)
@@ -490,6 +275,8 @@ enum JevChecks {
         controlled.resolve(5)
         check("empty gray zone invalidates in-flight reply", resolved.wait(timeout: .now() + 0.15) == .timedOut && batchAdvisor.latestBatch().actions.isEmpty)
 
+        failures.append(contentsOf: try JevPipelineChecks.run())
+        failures.append(contentsOf: try JevSequencingChecks.run())
         return failures
     }
 }
@@ -501,12 +288,11 @@ private final class ControlledBatchClient: JevClientProtocol, @unchecked Sendabl
     private var ids: [String] = []
     let started = DispatchSemaphore(value: 0)
 
-    func evaluate(state: JevRequestState, apiKey: String, requestID: String, endpoint: URL, model: String) async throws -> JevClientResult {
-        throw JevClientError.incompleteAnswers
-    }
-
     func evaluatePayload(stateJSON: Data, questionsJSON: Data, apiKey: String, requestID: String, endpoint: URL, model: String) async throws -> JevPayloadResult {
-        try await withCheckedThrowingContinuation { continuation in
+        if !requestID.hasSuffix("-decision") {
+            return JevPayloadResult(requestID: requestID, model: model, answersJSON: try JevPipelineChecks.assessmentData(), httpStatus: 200, latencyMs: 1)
+        }
+        return try await withCheckedThrowingContinuation { continuation in
             lock.lock()
             replies[requestID] = continuation
             ids.append(requestID)
@@ -524,7 +310,7 @@ private final class ControlledBatchClient: JevClientProtocol, @unchecked Sendabl
         if fail {
             reply?.resume(throwing: JevClientError.timeout)
         } else {
-            let json = "{\"app_0\":{\"choice\":\"\(choice)\",\"confidence\":0.99}}"
+            let json = "{\"app_0\":{\"type\":\"choice\",\"choice\":\"\(choice)\",\"confidence\":0.99}}"
             reply?.resume(returning: JevPayloadResult(requestID: id, model: "test", answersJSON: Data(json.utf8), httpStatus: 200, latencyMs: 1))
         }
     }

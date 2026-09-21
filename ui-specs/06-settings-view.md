@@ -6,7 +6,7 @@
 - 关键选择器：`button "设置" of window 1`；授权单选按钮: `button` containing `"仅建议 (Level 0)"` / `button` containing `"半自动 (Level 1)"`；滑块: `slider 1` (AXRole=`AXSlider`, 范围 2-10s)；Jev 开关: `checkbox "启用 Jev 灰区判断"`；预设按钮: `button "TypeSafe"`, `button "OpenRouter"`；输入框: `text field "Base URL"`, `text field "模型"`, `secure text field "API Key"`；操作按钮: `button "保存到钥匙串"`, `button "清除 Key"`；存储路径: `AXStaticText` (SQLite 路径)
 - 子功能：授权模式切换（Level 0 手动弹窗确认 vs Level 1 自动执行通知）、采样间隔微调滑块（2s ~ 10s）、Jev 大模型灰区决策总开关、供应商一键预设套用（TypeSafe / OpenRouter）、自定义 API 端点与模型名称、API Key 安全存取至系统 Keychain（支持保存与清除）、本地 SQLite 存储文件物理路径展示与复制
 - 前置条件：macOS 钥匙串（Keychain）可用；网络可访问对应大模型 API 端点
-- 常见故障现象：保存 API Key 报错 → 钥匙串访问权限被拒或沙盒阻拦；Jev 建议不出现 → Jev 开关未打开、API Key 未配置或网络不通导致降级回本地打分
+- 常见故障现象：保存 API Key 报错 → 钥匙串访问权限被拒或沙盒阻拦；Jev 建议不出现 → Jev 开关未打开、API Key 未配置或网络不通时保留
 
 ---
 
@@ -75,3 +75,11 @@ if !jevToggle.isSelected {
 // 点击 TypeSafe 预设
 window.buttons["TypeSafe"].click()
 ```
+
+### Jev 批量决策状态
+
+- 默认 TypeSafe 模型为 `jev-latest`。启用后，由算法筛选最多 5 个候选，先请求 Score/Noul 评估，再将结果传入 Choice 选择保留、降低优先级或退出。
+- 切换 Jev 开关、模型或 API 端点会使批量结果失效；请求期间及请求失败时不产生可执行的批量建议。
+- 同一候选与负载签名的结果最多复用 180 秒，前台应用或候选进程身份变化会重新评估。
+
+- 两阶段问题、阈值及候选规则见 [JevDecisionPipeline](JevDecisionPipeline/README.md)。Level 0 展示判断并确认，Level 1 使用同一决策自动执行。

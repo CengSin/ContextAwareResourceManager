@@ -165,7 +165,7 @@ struct SettingsView: View {
 
     private func applyTypeSafePreset() {
         coordinator.settings.jevBaseURL = JevURLSessionClient.defaultBaseURLString
-        coordinator.settings.jevModel = JevQuestions.defaultModel
+        coordinator.settings.jevModel = JevURLSessionClient.defaultModel
         coordinator.persistSettings()
     }
 
