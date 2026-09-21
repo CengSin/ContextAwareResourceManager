@@ -6,6 +6,10 @@ import ResourceStewardCore
 @main
 enum StewardChecks {
     static func main() throws {
+        if CommandLine.arguments.contains("--benchmark") {
+            PerformanceChecks.run()
+            return
+        }
         var failures: [String] = []
         func check(_ name: String, _ condition: @autoclosure () -> Bool) {
             if condition() {
@@ -497,6 +501,46 @@ enum StewardChecks {
         )
         let mixedKeys = ProcessGrouper.keys(snapshots: [exampleMain, orphan], hints: [exampleHint])
         check("unrelated apps stay separate", mixedKeys[20] != mixedKeys[22])
+
+        let conflictingHint = AppProcessHint(pid: 30, bundleID: "com.other.app", name: "Other")
+        let conflictingSnapshot = ProcessSnapshot(
+            pid: 31, bundleID: "COM.OTHER.APP", processName: "Worker",
+            path: exampleChild.path, memoryFootprintMB: 50, cpuPercent: 0,
+            isForeground: false, idleSeconds: 500
+        )
+        check("earlier path match wins over later bundle match",
+              ProcessGrouper.keys(snapshots: [conflictingSnapshot], hints: [exampleHint, conflictingHint])[31] == exampleHint.familyKey)
+        check("earlier bundle match wins over later path match",
+              ProcessGrouper.keys(snapshots: [conflictingSnapshot], hints: [conflictingHint, exampleHint])[31] == conflictingHint.familyKey)
+        let unicodeHint = AppProcessHint(pid: 32, bundleID: "com.example.Straße", name: "Unicode")
+        let unicodeSnapshot = ProcessSnapshot(
+            pid: 33, bundleID: "COM.EXAMPLE.STRASSE", processName: "Unicode",
+            memoryFootprintMB: 50, cpuPercent: 0, isForeground: false, idleSeconds: 500
+        )
+        check("indexed bundle comparison preserves Unicode case folding",
+              ProcessGrouper.keys(snapshots: [unicodeSnapshot], hints: [unicodeHint])[33] == unicodeHint.familyKey)
+        let execHint = AppProcessHint(pid: 34, bundleID: "com.example.worker", name: "Worker", executablePath: "/usr/local/bin/worker")
+        let execSnapshot = ProcessSnapshot(
+            pid: 35, bundleID: nil, processName: "Worker", path: "/usr/local/bin/worker",
+            memoryFootprintMB: 50, cpuPercent: 0, isForeground: false, idleSeconds: 500
+        )
+        check("executable index groups standalone worker",
+              ProcessGrouper.keys(snapshots: [execSnapshot], hints: [execHint])[35] == execHint.familyKey)
+        check("bundle path prefix requires directory boundary",
+              !ProcessGrouper.pathIsInside("/Applications/Example.app-copy/helper", directory: "/Applications/Example.app"))
+        check("cached negative keep-alive result", !KeepAlivePolicy.isKeepAlive(bundleID: "com.example.cache", processName: "Worker", path: "/usr/bin/worker"))
+        check("cache includes changed path", KeepAlivePolicy.isKeepAlive(bundleID: "com.example.cache", processName: "Worker", path: "/Applications/Docker.app/Contents/MacOS/worker"))
+        check("cache includes changed name", KeepAlivePolicy.isKeepAlive(bundleID: "com.example.cache", processName: "ClashX", path: "/usr/bin/worker"))
+        check("cache includes changed bundle", KeepAlivePolicy.isKeepAlive(bundleID: "com.docker.helper", processName: "Worker", path: "/usr/bin/worker"))
+        check("category cache stores no-category", CategoryBanPolicy.match(bundleID: "com.example.cache", processName: "Worker") == nil)
+        check("category cache sees changed identity", CategoryBanPolicy.match(bundleID: "com.example.cache", processName: "TencentMeeting") == .audioMeetingScreen)
+        check("user favorites are not cached", KeepAlivePolicy.shouldStayAlive(bundleID: "com.example.cache", processName: "Worker", extras: ["com.example.cache"]))
+        check("removing favorite takes effect immediately", !KeepAlivePolicy.shouldStayAlive(bundleID: "com.example.cache", processName: "Worker", extras: []))
+        for index in 0..<2_100 {
+            _ = CategoryBanPolicy.match(bundleID: "com.example.cache.eviction\(index)", processName: "Worker")
+        }
+        check("keep-alive correct after cache eviction", KeepAlivePolicy.isKeepAlive(bundleID: "com.docker.helper", processName: "Worker"))
+        check("category correct after cache eviction", CategoryBanPolicy.match(bundleID: "com.example.cache", processName: "TencentMeeting") == .audioMeetingScreen)
 
         let sameGen = ProcessGeneration(pid: 42, startUnix: 100.5)
         check("generation matches same start", sameGen.sameGeneration(ProcessGeneration(pid: 42, startUnix: 100.5)))

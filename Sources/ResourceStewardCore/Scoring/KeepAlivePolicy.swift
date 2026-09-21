@@ -127,7 +127,15 @@ public enum KeepAlivePolicy: Sendable {
         ".orbstack/"
     ]
 
+    private static let identityCache = IdentityRuleCache<Bool>()
+
     public static func isKeepAlive(bundleID: String?, processName: String, path: String = "") -> Bool {
+        identityCache.value(bundleID: bundleID, processName: processName, path: path) {
+            evaluate(bundleID: bundleID, processName: processName, path: path)
+        }
+    }
+
+    private static func evaluate(bundleID: String?, processName: String, path: String) -> Bool {
         if let bundleID {
             if bundleIDs.contains(bundleID) { return true }
             let id = bundleID.lowercased()

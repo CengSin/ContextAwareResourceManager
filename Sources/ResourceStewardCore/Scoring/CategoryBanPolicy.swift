@@ -55,7 +55,15 @@ public enum CategoryBanPolicy: Sendable {
         }
     }
 
+    private static let identityCache = IdentityRuleCache<ResourceCategory?>()
+
     public static func match(bundleID: String?, processName: String, path: String = "") -> ResourceCategory? {
+        identityCache.value(bundleID: bundleID, processName: processName, path: path) {
+            evaluate(bundleID: bundleID, processName: processName, path: path)
+        }
+    }
+
+    private static func evaluate(bundleID: String?, processName: String, path: String) -> ResourceCategory? {
         if KeepAlivePolicy.isKeepAlive(bundleID: bundleID, processName: processName, path: path) {
             return .keepAlive
         }
