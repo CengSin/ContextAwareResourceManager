@@ -35,6 +35,13 @@ public struct AppProcessHint: Sendable, Equatable {
 
 
 public enum ProcessGrouper: Sendable {
+    private struct PreparedHint: Sendable {
+        let key: String
+        let bundleID: String?
+        let bundlePrefix: String?
+        let executablePath: String
+    }
+
     public static func keys(
         snapshots: [ProcessSnapshot],
         hints: [AppProcessHint] = []
@@ -45,9 +52,22 @@ public enum ProcessGrouper: Sendable {
             pidToKey[hint.pid] = hint.familyKey
         }
 
+        let preparedHints: [PreparedHint] = hints.map { hint in
+            let key = pidToKey[hint.pid] ?? hint.familyKey
+            let cleanBundle = hint.bundlePath.isEmpty ? nil : (hint.bundlePath as NSString).standardizingPath
+            let bundlePrefix = cleanBundle.map { $0.hasSuffix("/") ? $0 : $0 + "/" }
+            let cleanExec = hint.executablePath.isEmpty ? "" : (hint.executablePath as NSString).standardizingPath
+            return PreparedHint(
+                key: key,
+                bundleID: hint.bundleID,
+                bundlePrefix: bundlePrefix,
+                executablePath: cleanExec
+            )
+        }
+
         for snapshot in snapshots {
             if pidToKey[snapshot.pid] != nil { continue }
-            if let key = matchHint(snapshot, hints: hints, pidToKey: pidToKey) {
+            if let key = matchHint(snapshot, preparedHints: preparedHints) {
                 pidToKey[snapshot.pid] = key
             }
         }
@@ -86,35 +106,36 @@ public enum ProcessGrouper: Sendable {
 
     public static func pathIsInside(_ path: String, directory: String) -> Bool {
         if path.isEmpty || directory.isEmpty { return false }
-        let cleanPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        let cleanDir = URL(fileURLWithPath: directory).standardizedFileURL.path
+        let cleanPath = (path as NSString).standardizingPath
+        let cleanDir = (directory as NSString).standardizingPath
         if cleanPath == cleanDir { return false }
-        return cleanPath.hasPrefix(cleanDir.hasSuffix("/") ? cleanDir : cleanDir + "/")
+        let prefix = cleanDir.hasSuffix("/") ? cleanDir : cleanDir + "/"
+        return cleanPath.hasPrefix(prefix)
     }
 
     private static func matchHint(
         _ snapshot: ProcessSnapshot,
-        hints: [AppProcessHint],
-        pidToKey: [Int32: String]
+        preparedHints: [PreparedHint]
     ) -> String? {
         let snapshotRoot = ProcessFamily.rootBundleID(from: snapshot.bundleID)
-        for hint in hints {
-            let key = pidToKey[hint.pid] ?? hint.familyKey
+        let snapPath = snapshot.path.isEmpty ? "" : (snapshot.path as NSString).standardizingPath
+
+        for hint in preparedHints {
             if let bundleID = snapshot.bundleID, let hintID = hint.bundleID,
                bundleID.caseInsensitiveCompare(hintID) == .orderedSame {
-                return key
+                return hint.key
             }
-            if let snapshotRoot, snapshotRoot.caseInsensitiveCompare(key) == .orderedSame {
-                return key
+            if let snapshotRoot, snapshotRoot.caseInsensitiveCompare(hint.key) == .orderedSame {
+                return hint.key
             }
-            if pathIsInside(snapshot.path, directory: hint.bundlePath) {
-                return key
+            if let prefix = hint.bundlePrefix, !snapPath.isEmpty {
+                if snapPath.hasPrefix(prefix) {
+                    return hint.key
+                }
             }
-            if !hint.executablePath.isEmpty {
-                let snapPath = URL(fileURLWithPath: snapshot.path).standardizedFileURL.path
-                let hintPath = URL(fileURLWithPath: hint.executablePath).standardizedFileURL.path
-                if snapPath == hintPath {
-                    return key
+            if !hint.executablePath.isEmpty, !snapPath.isEmpty {
+                if snapPath == hint.executablePath {
+                    return hint.key
                 }
             }
         }

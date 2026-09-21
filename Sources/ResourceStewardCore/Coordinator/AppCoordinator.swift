@@ -72,12 +72,6 @@ public final class AppCoordinator: ObservableObject {
             }
         }
         refresh()
-        let interval = max(2, settings.sampleIntervalSeconds)
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refresh()
-            }
-        }
     }
 
     public func stop() {
@@ -102,6 +96,8 @@ public final class AppCoordinator: ObservableObject {
     }
 
     public func refresh() {
+        timer?.invalidate()
+        timer = nil
         thawFrontmostIfFrozen()
         if refreshInFlight {
             refreshQueued = true
@@ -339,6 +335,20 @@ public final class AppCoordinator: ObservableObject {
         if refreshQueued {
             refreshQueued = false
             refresh()
+        } else {
+            scheduleNextTick()
+        }
+    }
+
+    private func scheduleNextTick() {
+        timer?.invalidate()
+        timer = nil
+        guard isRunning else { return }
+        let interval = max(2, settings.sampleIntervalSeconds)
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh()
+            }
         }
     }
 
@@ -363,13 +373,8 @@ public final class AppCoordinator: ObservableObject {
         jevAdvisor.updateBaseURL(settings.jevBaseURL)
         jevAdvisor.updateModel(settings.jevModel)
         try? store.saveSettings(settings)
-        if let timer, abs(timer.timeInterval - settings.sampleIntervalSeconds) > 0.4 {
-            timer.invalidate()
-            self.timer = Timer.scheduledTimer(withTimeInterval: max(2, settings.sampleIntervalSeconds), repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    self?.refresh()
-                }
-            }
+        if isRunning, !refreshInFlight {
+            scheduleNextTick()
         }
     }
 
