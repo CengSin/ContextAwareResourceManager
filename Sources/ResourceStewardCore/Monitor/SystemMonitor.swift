@@ -129,7 +129,10 @@ public final class SystemMonitor: @unchecked Sendable {
             memoryUsedBytes: raw.memory_used_bytes,
             memoryTotalBytes: raw.memory_total_bytes,
             name: stringFromCChar(raw.name),
-            available: true
+            available: true,
+            memoryUsedAvailable: raw.memory_used_available != 0,
+            memoryTotalAvailable: raw.memory_total_available != 0,
+            sampledAt: now
         )
         lastGPU = sampled
         lastGPUSampleAt = now

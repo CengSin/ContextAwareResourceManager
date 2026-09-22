@@ -65,6 +65,8 @@ typedef struct {
     double device_percent;
     uint64_t memory_used_bytes;
     uint64_t memory_total_bytes;
+    int memory_used_available;
+    int memory_total_available;
     char name[64];
 } RSHostGPU;
 

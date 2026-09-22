@@ -6,7 +6,7 @@
 - 关键选择器：`window 1 of application "ResourceSteward"` (subrole=`AXSystemDialog`)；模式标识: `AXStaticText "半自动"` / `AXStaticText "仅建议"`；Tab 导航: `button "进程"`, `button "常用"`, `button "设置"`；刷新按钮: `button` with AXHelp `"立即刷新"`；退出按钮: `button` with AXHelp `"退出管家（会自动解冻）"`
 - 子功能：环形 RAM 表盘占用率展示、CPU/GPU/内存多维硬件指标柱状图、后台闲置应用释放估算与治理状态胶囊、三大功能 Tab 切换、一键强制立即刷新、安全退出应用（自动解冻受控进程）
 - 前置条件：已完成新手引导（`hasCompletedOnboarding == true`）
-- 常见故障现象：点击面板外部面板立即消失 → macOS 窗口式 MenuBarExtra 失去焦点默认自动关闭；GPU 数据显示破折号或“当前无法读取” → 系统无独立 GPU 或无 IOKit/Metal 读取权限
+- 常见故障现象：点击面板外部面板立即消失 → macOS 窗口式 MenuBarExtra 失去焦点默认自动关闭；GPU 数据显示破折号或“当前无法读取” → 当前驱动未提供可读 GPU 计数器
 
 ---
 
@@ -76,4 +76,4 @@ XCTAssertTrue(window.searchFields.firstMatch.exists)
 
 ### Jev 治理状态
 
-底栏治理状态显示候选与请求阶段：负载未达到条件、持续负载观察、无可治理应用、候选未满足空闲/占用条件、评估阶段 1/2 或 2/2、错误等待重试、动作后观察。黄色压力不等同于存在可退出候选；失败冷却期间显示失败原因。详见 [JevDecisionPipeline](JevDecisionPipeline/README.md)。
+底栏治理状态显示候选与请求阶段：负载未达到条件、持续负载观察、无可治理应用、候选未满足空闲/占用条件、评估阶段 1/2 或 2/2、错误等待重试、全局请求间隔等待、动作后观察。黄色压力不等同于存在可退出候选；失败冷却期间显示失败原因。详见 [JevDecisionPipeline](JevDecisionPipeline/README.md)。

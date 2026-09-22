@@ -7,6 +7,12 @@ import ResourceStewardCore
 enum StewardChecks {
     static func main() throws {
         JevLog.configureFileLogging(enabled: false)
+        if CommandLine.arguments.contains("--diagnostics") {
+            let failures = try ResourceDiagnosticsChecks.run()
+            if !failures.isEmpty { print("Failed: " + failures.joined(separator: ", ")); exit(1) }
+            print("All diagnostics checks passed.")
+            return
+        }
         if CommandLine.arguments.contains("--benchmark") {
             PerformanceChecks.run()
             return
@@ -1076,6 +1082,7 @@ enum StewardChecks {
         let notice = AutoReclaimNotice(throttleCount: 1, quitCount: 0, names: ["Chrome"])
         check("auto notice body matches copy", notice.body.contains("降低 1 个优先级") && notice.title == ReclaimNoticeCopy.level1Title)
 
+        failures.append(contentsOf: try ResourceDiagnosticsChecks.run())
         failures.append(contentsOf: try JevChecks.run())
 
         if failures.isEmpty {

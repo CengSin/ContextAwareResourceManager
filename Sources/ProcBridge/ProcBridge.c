@@ -251,8 +251,9 @@ int rs_host_gpu(RSHostGPU *out) {
                 int has_util = rs_copy_gpu_util(perf, &util);
                 uint64_t used = 0;
                 uint64_t total = 0;
-                if (!rs_copy_u64(perf, CFSTR("gartUsedBytes"), &used)) {
-                    rs_copy_u64(perf, CFSTR("In use system memory"), &used);
+                int has_used = rs_copy_u64(perf, CFSTR("gartUsedBytes"), &used);
+                if (!has_used) {
+                    has_used = rs_copy_u64(perf, CFSTR("In use system memory"), &used);
                 }
                 uint64_t vram_mb = 0;
                 if (rs_copy_u64(props, CFSTR("VRAM,totalMB"), &vram_mb) && vram_mb > 0) {
@@ -269,6 +270,8 @@ int rs_host_gpu(RSHostGPU *out) {
                     out->device_percent = util;
                     out->memory_used_bytes = used;
                     out->memory_total_bytes = total;
+                    out->memory_used_available = has_used;
+                    out->memory_total_available = total > 0;
                     io_name_t name;
                     if (IORegistryEntryGetName(entry, name) == KERN_SUCCESS) {
                         strncpy(out->name, name, sizeof(out->name) - 1);

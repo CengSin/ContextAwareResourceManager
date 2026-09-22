@@ -85,3 +85,5 @@ window.buttons["TypeSafe"].click()
 - 两阶段问题、阈值及候选规则见 [JevDecisionPipeline](JevDecisionPipeline/README.md)。Level 0 展示判断并确认，Level 1 使用同一决策自动执行。
 
 API Key 保存在 SQLite 的 `settings/jev.apiKey`，启动时加载并缓存。保存与清除成功后立即更新凭据状态、清空输入框并废弃旧 Jev 决策；空白输入等同清除。写入失败显示错误并保留原凭据，读取失败停止 Jev 请求。
+
+新批次跨签名至少间隔 20 秒，失败后从完成时再等 20 秒；已有网络批次结束前不重叠请求。详见 [JevDecisionPipeline](JevDecisionPipeline/README.md)。

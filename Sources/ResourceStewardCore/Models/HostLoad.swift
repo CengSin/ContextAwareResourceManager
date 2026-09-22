@@ -38,19 +38,28 @@ public struct HostGPU: Sendable, Equatable {
     public let memoryTotalBytes: UInt64
     public let name: String
     public let available: Bool
+    public let memoryUsedAvailable: Bool
+    public let memoryTotalAvailable: Bool
+    public let sampledAt: Date?
 
     public init(
         usagePercent: Double,
         memoryUsedBytes: UInt64 = 0,
         memoryTotalBytes: UInt64 = 0,
         name: String = "",
-        available: Bool
+        available: Bool,
+        memoryUsedAvailable: Bool? = nil,
+        memoryTotalAvailable: Bool? = nil,
+        sampledAt: Date? = nil
     ) {
         self.usagePercent = min(100, max(0, usagePercent))
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
         self.name = name
         self.available = available
+        self.memoryUsedAvailable = memoryUsedAvailable ?? (available && memoryTotalBytes > 0)
+        self.memoryTotalAvailable = memoryTotalAvailable ?? (available && memoryTotalBytes > 0)
+        self.sampledAt = available ? (sampledAt ?? Date()) : nil
     }
 
     public static let unavailable = HostGPU(usagePercent: 0, available: false)

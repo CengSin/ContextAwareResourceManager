@@ -8,8 +8,9 @@ enum JevSequencingChecks {
             print("\(value ? "ok  " : "FAIL") \(name)")
             if !value { failures.append(name) }
         }
+        let clock = JevTestClock()
         let client = SequencedJevClient()
-        let advisor = JevReclaimAdvisor(enabled: true, client: client, apiKeyProvider: { "test" })
+        let advisor = JevReclaimAdvisor(enabled: true, client: client, apiKeyProvider: { "test" }, monotonicNow: { clock.now })
         let completed = DispatchSemaphore(value: 0)
         advisor.setOnBatchResolved { completed.signal() }
         var load = JevLoadState(memory_pressure: "critical", cpu_percent: 10, memory_used_ratio: 0.95, swap_used_mb: 100, memory_pressure_seconds: 25)
@@ -30,6 +31,7 @@ enum JevSequencingChecks {
         check("second request restricts actual choices", Set(criteria?.keys.map { $0 } ?? []) == Set(["keep", "quit"]))
         client.resolve(1, data: Data(#"{"app_0":{"type":"choice","choice":"quit","confidence":0.99}}"#.utf8))
         check("second stage publishes final evidence", completed.wait(timeout: .now() + 2) == .success && advisor.latestBatch().actions[app.bundle_id] == .quit && advisor.latestBatch().evidence[app.bundle_id] != nil)
+        clock.advance(20)
         load.foreground_bundle_id = "com.example.editor"
         _ = advisor.syncBatch(load: load, apps: [app])
         check("changed context starts new assessment", client.started.wait(timeout: .now() + 2) == .success)
@@ -37,6 +39,7 @@ enum JevSequencingChecks {
         client.resolve(2, data: try JevPipelineChecks.assessmentData())
         check("invalidated assessment never starts decision", client.started.wait(timeout: .now() + 0.15) == .timedOut && advisor.latestBatch().actions.isEmpty)
         advisor.updateEnabled(true)
+        clock.advance(20)
         _ = advisor.syncBatch(load: load, apps: [app])
         check("assessment retries after reenable", client.started.wait(timeout: .now() + 2) == .success)
         client.resolve(3, data: Data("{}".utf8))
@@ -90,5 +93,20 @@ private final class SequencedJevClient: JevClientProtocol, @unchecked Sendable {
         let id = requests[index].2
         lock.unlock()
         continuation?.resume(returning: JevPayloadResult(requestID: id, model: "test", answersJSON: data, httpStatus: 200, latencyMs: 1))
+    }
+}
+
+final class JevTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval = 100
+    var now: TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+    func advance(_ delta: TimeInterval) {
+        lock.lock()
+        value += delta
+        lock.unlock()
     }
 }

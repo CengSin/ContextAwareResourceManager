@@ -8,6 +8,7 @@ public enum JevPipelineStatus: Sendable, Equatable {
     case assessing
     case deciding
     case failed(String)
+    case requestCooldown
     case actionCooldown
 
     public var message: String {
@@ -19,6 +20,7 @@ public enum JevPipelineStatus: Sendable, Equatable {
         case .assessing: return "Jev 正在评估负载与应用用途（1/2）…"
         case .deciding: return "Jev 正在根据评估选择动作（2/2）…"
         case .failed(let reason): return "Jev 评估失败，稍后重试：\(reason)"
+        case .requestCooldown: return "等待上一批请求结束或请求间隔（至少 20 秒）"
         case .actionCooldown: return "正在观察处理效果，至少 30 秒后重新评估"
         }
     }
@@ -32,6 +34,7 @@ public enum JevPipelineStatus: Sendable, Equatable {
         case .assessing: return "assessing"
         case .deciding: return "deciding"
         case .failed: return "failed"
+        case .requestCooldown: return "request_cooldown"
         case .actionCooldown: return "action_cooldown"
         }
     }

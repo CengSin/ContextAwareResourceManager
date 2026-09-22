@@ -28,6 +28,8 @@ public final class AppCoordinator: ObservableObject {
     public let jevAdvisor: JevReclaimAdvisor
     @Published public private(set) var jevAPIKeyStatus = "未配置"
 
+    private let resourceHistory = ResourceHistory()
+    private let actionDiagnostics = ActionDiagnostics()
     private let monitor = SystemMonitor()
     private let pressureMonitor = MemoryPressureMonitor()
     private var collector: ContextCollector!
@@ -40,6 +42,7 @@ public final class AppCoordinator: ObservableObject {
     private var actionCooldown = ActionAttemptCooldown()
     private var decisionLoadWindow = JevLoadWindow()
     private var nextDecisionAt = Date.distantPast
+    private var lastExecutionGate: [String: String] = [:]
     private var lastPersistedFrozenSignature: Set<String> = []
 
     public init(store: LocalStore) {
@@ -73,6 +76,7 @@ public final class AppCoordinator: ObservableObject {
         let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
         jevAdvisor.updateAPIKey(key)
         jevAPIKeyStatus = key.isEmpty ? "未配置" : "已配置（SQLite）"
+        DiagnosticLog.shared.record("credential_updated", ["configured": !key.isEmpty])
         pendingBatch = nil
         autoStatusText = key.isEmpty ? "Jev 未配置 API Key" : "Key 已更新，等待下一次评估"
         if isRunning { refresh() }
@@ -81,6 +85,15 @@ public final class AppCoordinator: ObservableObject {
     public func start() {
         guard !isRunning else { return }
         isRunning = true
+        DiagnosticLog.shared.record("app_started", [
+            "pid": ProcessInfo.processInfo.processIdentifier,
+            "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+            "build": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+            "build_revision": Bundle.main.infoDictionary?["ResourceStewardBuildRevision"] as? String ?? "unknown",
+            "build_time": Bundle.main.infoDictionary?["ResourceStewardBuildTime"] as? String ?? "unknown",
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+            "system_uptime_seconds": ProcessInfo.processInfo.systemUptime
+        ])
         NSApp.setActivationPolicy(.accessory)
         pressureMonitor.start()
         collector.start()
@@ -95,6 +108,9 @@ public final class AppCoordinator: ObservableObject {
     }
 
     public func stop() {
+        actionDiagnostics.stop()
+        DiagnosticLog.shared.record("app_stopping")
+        DiagnosticLog.shared.flush()
         jevAdvisor.invalidateBatch()
         decisionLoadWindow = JevLoadWindow()
         let failures = executor.thawAll()
@@ -165,6 +181,7 @@ public final class AppCoordinator: ObservableObject {
         var host: HostMemory
         var cpu: HostCPU
         var gpu: HostGPU
+        var sourcePressure: MemoryPressureLevel
         var pressure: MemoryPressureLevel
         var snapshots: [ProcessSnapshot]
         var windowOwnerPIDs: Set<Int32>?
@@ -276,6 +293,7 @@ public final class AppCoordinator: ObservableObject {
             host: host,
             cpu: cpu,
             gpu: gpu,
+            sourcePressure: pressureLevel,
             pressure: host.inferredPressure(sourceLevel: pressureLevel),
             snapshots: snapshots,
             windowOwnerPIDs: windowOwnerPIDs,
@@ -315,6 +333,10 @@ public final class AppCoordinator: ObservableObject {
             windowOwnerPIDs: tick.windowOwnerPIDs
         )
         let observedLoad = decisionLoadWindow.observe(load)
+        resourceHistory.sample(host: tick.host, cpu: tick.cpu, gpu: tick.gpu, source: tick.sourcePressure,
+            load: observedLoad, snapshots: tick.snapshots, groups: tick.groups, favorites: settings.favoriteBundleIDs,
+            authorization: settings.authorizationLevel.rawValue, jevActive: jevAdvisor.isActive, at: tick.now)
+        actionDiagnostics.observe(snapshots: tick.snapshots, host: tick.host, at: tick.now)
         let batch: JevBatchSnapshot
         if Date() >= nextDecisionAt {
             batch = jevAdvisor.syncBatch(load: observedLoad, apps: grayApps)
@@ -399,13 +421,21 @@ public final class AppCoordinator: ObservableObject {
         jevAdvisor.updateEnabled(settings.jevReclaimEnabled)
         jevAdvisor.updateBaseURL(settings.jevBaseURL)
         jevAdvisor.updateModel(settings.jevModel)
-        try? store.saveSettings(settings)
+        do {
+            try store.saveSettings(settings)
+            DiagnosticLog.shared.record("settings_saved", ["authorization_level": settings.authorizationLevel.rawValue,
+                "jev_enabled": settings.jevReclaimEnabled, "jev_active": jevAdvisor.isActive,
+                "sample_interval_seconds": settings.sampleIntervalSeconds, "favorite_bundle_ids": settings.favoriteBundleIDs.sorted()])
+        } catch {
+            DiagnosticLog.shared.record("storage_error", ["operation": "save_settings", "code": (error as NSError).code])
+        }
         if isRunning, !refreshInFlight {
             scheduleNextTick()
         }
     }
 
     public func request(_ action: SuggestedAction, for group: ProcessGroupViewModel) {
+        DiagnosticLog.shared.record("confirmation_shown", ["origin": "manual", "bundle_id": group.key, "action": action.rawValue])
         pendingAction = PendingAction(group: group, action: action)
     }
 
@@ -413,11 +443,8 @@ public final class AppCoordinator: ObservableObject {
         guard let pending = pendingAction else { return }
         pendingAction = nil
         executor.extraKeepAliveBundleIDs = settings.favoriteBundleIDs
-        let result = executor.execute(
-            action: pending.action,
-            snapshots: pending.group.members.map(\.snapshot),
-            groupBundleID: pending.group.key.hasPrefix("pid:") ? pending.group.primary.snapshot.bundleID : pending.group.key
-        )
+        let result = actionDiagnostics.execute(group: pending.group, action: pending.action, origin: "manual_confirmed",
+            requestID: nil, executor: executor, host: hostMemory)
         lastMessage = result.message
         lastMessageIsError = !result.ok
         try? store.insertFeedback(
@@ -434,6 +461,7 @@ public final class AppCoordinator: ObservableObject {
 
     public func cancelPending() {
         if let pending = pendingAction {
+            DiagnosticLog.shared.record("confirmation_cancelled", ["origin": "manual", "bundle_id": pending.group.key])
             try? store.insertFeedback(
                 UserFeedback(
                     bundleID: pending.group.score.bundleID,
@@ -448,18 +476,18 @@ public final class AppCoordinator: ObservableObject {
     public func confirmPendingBatch() {
         guard let batch = pendingBatch else { return }
         pendingBatch = nil
-        guard jevAdvisor.isActive else { return }
+        guard jevAdvisor.isActive else {
+            DiagnosticLog.shared.record("confirmation_rejected", ["reason": "jev_inactive"])
+            return
+        }
         let live = jevAdvisor.latestBatch()
         let current = actionableItems(from: processGroups, batch: live)
         let approved = Set(batch.items.map(decisionIdentity))
         var okCount = 0
         executor.extraKeepAliveBundleIDs = settings.favoriteBundleIDs
         for item in current where approved.contains(decisionIdentity(item)) {
-            let result = executor.execute(
-                action: item.action,
-                snapshots: item.group.members.map(\.snapshot),
-                groupBundleID: item.group.key.hasPrefix("pid:") ? item.group.primary.snapshot.bundleID : item.group.key
-            )
+            let result = actionDiagnostics.execute(group: item.group, action: item.action, origin: "jev_confirmed",
+                requestID: live.requestID, executor: executor, host: hostMemory)
             actionCooldown.record(item.group.key, at: Date())
             if result.ok {
                 okCount += 1
@@ -472,6 +500,8 @@ public final class AppCoordinator: ObservableObject {
                 )
             }
         }
+        DiagnosticLog.shared.record("confirmation_completed", ["request_id": live.requestID ?? "expired",
+            "successful_actions": okCount, "matching_actions": current.filter { approved.contains(decisionIdentity($0)) }.count])
         nextDecisionAt = Date().addingTimeInterval(30)
         jevAdvisor.invalidateBatch()
         lastMessage = okCount > 0 ? "已按建议处理 \(okCount) 个应用。" : "没有成功执行的建议。"
@@ -483,6 +513,8 @@ public final class AppCoordinator: ObservableObject {
 
     public func cancelPendingBatch() {
         if let batch = pendingBatch {
+            DiagnosticLog.shared.record("confirmation_cancelled", ["origin": "jev", "request_id": jevAdvisor.latestBatch().requestID ?? "expired",
+                "bundle_ids": batch.items.map { $0.group.key }])
             for item in batch.items { actionCooldown.record(item.group.key, at: Date()) }
             nextDecisionAt = Date().addingTimeInterval(30)
             jevAdvisor.invalidateBatch()
@@ -778,11 +810,13 @@ public final class AppCoordinator: ObservableObject {
     private func persistIfNeeded(snapshots: [ProcessSnapshot], now: Date) {
         if now.timeIntervalSince(lastPersistAt) >= 15 {
             let notable = snapshots.filter { $0.memoryFootprintMB >= 20 || $0.isForeground || $0.cpuPercent >= 15 }
-            try? store.insertSnapshots(notable)
+            do { try store.insertSnapshots(notable) }
+            catch { DiagnosticLog.shared.record("storage_error", ["operation": "insert_snapshots", "code": (error as NSError).code]) }
             lastPersistAt = now
         }
         if now.timeIntervalSince(lastPruneAt) >= 3600 {
-            try? store.pruneOlderThan(days: 14)
+            do { try store.pruneOlderThan(days: 14) }
+            catch { DiagnosticLog.shared.record("storage_error", ["operation": "prune_snapshots", "code": (error as NSError).code]) }
             lastPruneAt = now
         }
     }
@@ -835,21 +869,36 @@ public final class AppCoordinator: ObservableObject {
         now: Date
     ) {
         guard jevAdvisor.isActive, !batch.pending else {
+            if pendingBatch != nil { DiagnosticLog.shared.record("confirmation_dismissed", ["reason": "inactive_or_new_assessment"]) }
             pendingBatch = nil
             return
         }
         let items = actionableItems(from: groups, batch: batch)
-        guard !items.isEmpty else { pendingBatch = nil; return }
+        guard !items.isEmpty else {
+            if let previous = pendingBatch {
+                DiagnosticLog.shared.record("confirmation_dismissed", ["reason": "no_current_actionable_decision", "bundle_ids": previous.items.map { $0.group.key }])
+            }
+            pendingBatch = nil
+            return
+        }
         let signature = items.map(decisionIdentity).sorted().joined(separator: "|")
         if settings.authorizationLevel == .sceneSwitch {
             if pendingBatch != nil {
                 pendingBatch = nil
             }
             if pendingAction == nil {
-                executeAutoItems(items, now: now)
+                executeAutoItems(items, now: now, requestID: batch.requestID)
+            } else {
+                let key = (batch.requestID ?? "unknown") + ":route"
+                if lastExecutionGate[key] != "manual_confirmation_open" {
+                    lastExecutionGate[key] = "manual_confirmation_open"
+                    DiagnosticLog.shared.record("execution_deferred", ["request_id": batch.requestID ?? "unknown", "reason": "manual_confirmation_open"])
+                }
             }
         } else if pendingAction == nil, pendingBatch?.id != signature {
             pendingBatch = PendingDecisionBatch(id: signature, items: items)
+            DiagnosticLog.shared.record("confirmation_shown", ["origin": "jev", "request_id": batch.requestID ?? "unknown",
+                "authorization_level": settings.authorizationLevel.rawValue, "bundle_ids": items.map { $0.group.key }])
             JevLog.info(
                 "confirm_pending_set items=\(items.map { "\($0.group.key)=\($0.action.rawValue)" }.joined(separator: ","))"
             )
@@ -873,13 +922,21 @@ public final class AppCoordinator: ObservableObject {
             let bundle = candidate.bundleID
             let action = (batch.actions[bundle] ?? .none).withoutFreeze()
             guard action.isActable else { continue }
-            guard JevHardGate.isGrayZone(candidate) else { continue }
-            if action == .throttle, group.members.allSatisfy({ $0.appliedAction == .throttle }) { continue }
-            if action == .quit, group.idleSeconds < 300 {
-                continue
+            let reason: String
+            if let blocked = JevHardGate.skipReason(for: candidate) { reason = blocked.1 }
+            else if action == .throttle && group.members.allSatisfy({ $0.appliedAction == .throttle }) { reason = "already_throttled" }
+            else if action == .quit && group.idleSeconds < 300 { reason = "recently_foreground" }
+            else if !actionCooldown.allows(group.key, at: Date()) { reason = "application_cooldown" }
+            else if batch.evidence[bundle] == nil { reason = "missing_evidence" }
+            else { reason = "eligible" }
+            let gateKey = (batch.requestID ?? "unknown") + ":" + bundle
+            if lastExecutionGate[gateKey] != reason {
+                if lastExecutionGate.count > 200 { lastExecutionGate.removeAll() }
+                lastExecutionGate[gateKey] = reason
+                DiagnosticLog.shared.record("execution_gate", ["request_id": batch.requestID ?? "unknown", "bundle_id": bundle,
+                    "action": action.rawValue, "reason": reason, "authorization_level": settings.authorizationLevel.rawValue])
             }
-            guard actionCooldown.allows(group.key, at: Date()) else { continue }
-            guard let evidence = batch.evidence[bundle] else { continue }
+            guard reason == "eligible", let evidence = batch.evidence[bundle] else { continue }
             items.append(PendingDecisionItem(group: group, action: action, evidence: evidence))
             break
         }
@@ -888,7 +945,8 @@ public final class AppCoordinator: ObservableObject {
 
     private func executeAutoItems(
         _ items: [PendingDecisionItem],
-        now: Date
+        now: Date,
+        requestID: String?
     ) {
         guard now >= nextDecisionAt else { return }
         nextDecisionAt = now.addingTimeInterval(30)
@@ -897,11 +955,8 @@ public final class AppCoordinator: ObservableObject {
         var quitCount = 0
         var names: [String] = []
         for item in items {
-            let result = executor.execute(
-                action: item.action,
-                snapshots: item.group.members.map(\.snapshot),
-                groupBundleID: item.group.key.hasPrefix("pid:") ? item.group.primary.snapshot.bundleID : item.group.key
-            )
+            let result = actionDiagnostics.execute(group: item.group, action: item.action, origin: "jev_automatic",
+                requestID: requestID, executor: executor, host: hostMemory)
             actionCooldown.record(item.group.key, at: now)
             if result.ok {
                 names.append(item.group.displayName)

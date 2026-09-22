@@ -23,6 +23,7 @@ public enum JevLog {
 
     public static func configureFileLogging(enabled: Bool) {
         queue.sync { ringBox.fileLoggingEnabled = enabled }
+        DiagnosticLog.shared.configure(enabled: enabled)
     }
 
     public static func info(_ message: String) {

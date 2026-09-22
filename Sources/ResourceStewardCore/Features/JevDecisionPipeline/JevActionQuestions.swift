@@ -28,7 +28,9 @@ public enum JevActionQuestions {
     public static func parse(
         _ data: Data,
         apps: [JevGrayApp],
-        assessment: JevAssessment
+        assessment: JevAssessment,
+        requestID: String = "untracked",
+        diagnostics: DiagnosticLog = .shared
     ) throws -> (actions: [String: SuggestedAction], evidence: [String: JevDecisionEvidence]) {
         guard let answers = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw JevClientError.parse("decisions not object")
@@ -37,13 +39,27 @@ public enum JevActionQuestions {
         var evidence: [String: JevDecisionEvidence] = [:]
         for app in apps {
             actions[app.bundle_id] = SuggestedAction.none
-            guard let obj = try? JevAnswerValidation.object(answers["app_\(app.index)"], type: "choice"),
-                  let choice = obj["choice"] as? String,
-                  app.allowed_actions.contains(choice),
-                  let confidence = try? JevAnswerValidation.number(obj["confidence"], in: 0...1),
-                  let facts = assessment.apps[app.bundle_id] else { continue }
-            let action = JevDecisionPolicy.action(choice: choice, confidence: confidence, allowed: app.allowed_actions, assessment: assessment, app: facts)
+            let raw = (answers["app_\(app.index)"] as? [String: Any]) ?? [:]
+            let rawChoice = raw["choice"] as? String
+            let choice = ["keep", "quit", "throttle", "freeze"].contains(rawChoice ?? "") ? rawChoice : nil
+            let confidence = try? JevAnswerValidation.number(raw["confidence"], in: 0...1)
+            let facts = assessment.apps[app.bundle_id]
+            let reason: String
+            if raw["type"] as? String != "choice" { reason = "invalid_choice_type_or_missing_answer" }
+            else if choice == nil { reason = "invalid_or_missing_choice" }
+            else if confidence == nil { reason = "invalid_or_missing_confidence" }
+            else if facts == nil { reason = "missing_assessment" }
+            else { reason = JevDecisionPolicy.reason(choice: choice!, confidence: confidence!, allowed: app.allowed_actions, assessment: assessment, app: facts!) }
+            let action: SuggestedAction = reason == "accepted" ? (choice == "quit" ? .quit : .throttle) : .none
             actions[app.bundle_id] = action
+            diagnostics.record("jev_decision", [
+                "request_id": requestID, "bundle_id": app.bundle_id, "app_index": app.index,
+                "model_choice": choice as Any? ?? NSNull(), "choice_valid": choice != nil,
+                "confidence": confidence as Any? ?? NSNull(), "allowed_actions": app.allowed_actions,
+                "final_action": action.rawValue, "reason": reason
+            ])
+            guard raw["type"] as? String == "choice", let choice, app.allowed_actions.contains(choice),
+                  let confidence, let facts else { continue }
             evidence[app.bundle_id] = JevDecisionEvidence(
                 assessment: facts, memoryUrgency: assessment.memory_urgency, cpuUrgency: assessment.cpu_urgency,
                 confidence: confidence, candidateScore: app.candidate_score, memoryMB: app.memory_mb, idleSeconds: app.idle_seconds
@@ -55,15 +71,25 @@ public enum JevActionQuestions {
 
 public enum JevDecisionPolicy {
     public static func action(choice: String, confidence: Double, allowed: [String], assessment: JevAssessment, app: JevAppAssessment) -> SuggestedAction {
-        guard confidence.isFinite, (0...1).contains(confidence), allowed.contains(choice),
-              app.work_related <= 0.2, app.continuous_service <= 0.2 else { return .none }
+        guard reason(choice: choice, confidence: confidence, allowed: allowed, assessment: assessment, app: app) == "accepted" else { return .none }
+        return choice == "quit" ? .quit : .throttle
+    }
+
+    public static func reason(choice: String, confidence: Double, allowed: [String], assessment: JevAssessment, app: JevAppAssessment) -> String {
+        guard confidence.isFinite, (0...1).contains(confidence) else { return "invalid_confidence" }
+        guard allowed.contains(choice) else { return "action_not_allowed" }
+        if choice == "keep" { return "model_keep" }
+        guard app.work_related <= 0.2 else { return "work_related_or_uncertain" }
+        guard app.continuous_service <= 0.2 else { return "continuous_service_or_uncertain" }
         switch choice {
-        case "quit" where confidence >= 0.9 && assessment.memory_urgency.supportsAction:
-            return .quit
-        case "throttle" where confidence >= 0.8 && assessment.cpu_urgency.supportsAction:
-            return .throttle
-        default:
-            return .none
+        case "quit":
+            guard confidence >= 0.9 else { return "quit_confidence_below_threshold" }
+            guard assessment.memory_urgency.supportsAction else { return "memory_urgency_below_threshold" }
+        case "throttle":
+            guard confidence >= 0.8 else { return "throttle_confidence_below_threshold" }
+            guard assessment.cpu_urgency.supportsAction else { return "cpu_urgency_below_threshold" }
+        default: return "unsupported_action"
         }
+        return "accepted"
     }
 }
