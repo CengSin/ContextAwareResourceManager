@@ -756,14 +756,15 @@ enum StewardChecks {
         check("blacklist persist", store.loadBlacklist().contains("com.example.app"))
 
         let warningHost = HostMemory(
-            pageSize: 4096, physicalBytes: 16_000_000_000, freeBytes: 1_000_000_000,
+            pageSize: 4096, physicalBytes: 16_000_000_000, freeBytes: 500_000_000,
             activeBytes: 4_000_000_000, inactiveBytes: 2_000_000_000, wiredBytes: 2_000_000_000,
             compressedBytes: 1_000_000_000, speculativeBytes: 0, purgeableBytes: 0,
-            internalBytes: 8_000_000_000, externalBytes: 1_000_000_000,
+            internalBytes: 9_600_000_000, externalBytes: 1_000_000_000,
             swapTotalBytes: 2_000_000_000, swapUsedBytes: 400_000_000,
             swapins: 1_000_000, swapouts: 1_000_000
         )
-        check("cumulative swapouts do not force critical", warningHost.inferredPressure(sourceLevel: .normal) == .warning)
+        check("high used ratio warns without critical", warningHost.inferredPressure(sourceLevel: .normal) == .warning)
+        check("used ratio above 75 percent warns", warningHost.usedRatio > 0.75 && warningHost.compressedRatio <= 0.25)
         let calmHost = HostMemory(
             pageSize: 4096, physicalBytes: 16_000_000_000, freeBytes: 8_000_000_000,
             activeBytes: 2_000_000_000, inactiveBytes: 1_000_000_000, wiredBytes: 1_000_000_000,
@@ -772,6 +773,24 @@ enum StewardChecks {
             swapTotalBytes: 0, swapUsedBytes: 0, swapins: 10, swapouts: 10
         )
         check("no swap is normal pressure", calmHost.inferredPressure(sourceLevel: .normal) == .normal)
+        let compressedHost = HostMemory(
+            pageSize: 4096, physicalBytes: 16_000_000_000, freeBytes: 4_000_000_000,
+            activeBytes: 4_000_000_000, inactiveBytes: 3_000_000_000, wiredBytes: 2_000_000_000,
+            compressedBytes: 4_100_000_000, speculativeBytes: 0, purgeableBytes: 0,
+            internalBytes: 5_000_000_000, externalBytes: 1_000_000_000,
+            swapTotalBytes: 2_000_000_000, swapUsedBytes: 400_000_000,
+            swapins: 100, swapouts: 100
+        )
+        check("compressed ratio above 25 percent warns", compressedHost.inferredPressure(sourceLevel: .normal) == .warning)
+        let swapCriticalHost = HostMemory(
+            pageSize: 4096, physicalBytes: 16_000_000_000, freeBytes: 4_000_000_000,
+            activeBytes: 4_000_000_000, inactiveBytes: 3_000_000_000, wiredBytes: 2_000_000_000,
+            compressedBytes: 500_000_000, speculativeBytes: 0, purgeableBytes: 0,
+            internalBytes: 5_000_000_000, externalBytes: 1_000_000_000,
+            swapTotalBytes: 4_000_000_000, swapUsedBytes: 1_100_000_000,
+            swapins: 100, swapouts: 100
+        )
+        check("swap above 1GB is critical", swapCriticalHost.inferredPressure(sourceLevel: .normal) == .critical)
 
         let host = SystemMonitor().sampleHost()
         check("host physical memory", host.physicalBytes > 0 && host.pageSize > 0)

@@ -9,13 +9,21 @@
 - 检查：`Sources/StewardChecks/Features/JevDecisionPipeline/`
 - `AppCoordinator` 负责采样、授权路由与执行接线；API 凭据保存在 SQLite 的 `settings` 表独立条目 `jev.apiKey`。
 
+## 压力等级口径
+
+候选触发与决策共用内存压力等级（normal/warning/critical），取 OS DispatchSource 压力事件与本机指标推断的较高者（`HostMemory.inferredPressure`）：
+
+- OS 事件：critical/warning 直接采用；指标不降级 OS 已报告的压力。
+- 指标推断：Swap 已用 > 1 GB 判 critical；压缩率 > 25% 或内存用量（internal + wired + compressed）> 75% 判 warning。
+- 只使用当前采样值判定，累计 swapins/swapouts 不参与。
+
 ## 本地候选算法
 
 先按应用族聚合，使用前台、系统保护、类别禁令、常用保活、accessory 和用户应用规则过滤。咨询身份、PID、名称、路径及 regular/accessory 属性来自主应用成员，资源占用仍按整组汇总；内存最大的 Renderer 不代表主应用身份。只有 Helper 的组不进入咨询；主应用在前台或常用保活名单中时整组保护。
 
 | 目标 | 触发与候选条件 | 优先级 |
 |---|---|---|
-| 内存 | OS 压力 warning/critical 持续至少 20 秒；应用至少 5 分钟未到前台，占用至少 200 MB | `min(memoryMB / 2048, 1) × min(idleSeconds / 1800, 1)` |
+| 内存 | 内存压力 warning/critical 持续至少 20 秒（等级口径见上节）；应用至少 5 分钟未到前台，占用至少 200 MB | `min(memoryMB / 2048, 1) × min(idleSeconds / 1800, 1)` |
 | CPU | 全机 CPU ≥80% 持续至少 30 秒；应用至少 60 秒未到前台，当前应用族 CPU ≥20% | `min(appCPU / 100, 1) × min(idleSeconds / 300, 1)` |
 
 按两项优先级最大值排序，最多取 5 个候选，并分别赋予 keep/quit 或 keep/throttle 权限。CPU 百分比使用采样器现有口径：全机 0–100%，应用族可能超过 100%。应用族 CPU 是当前采样值，不宣称已持续高占用。内存占用是收益代理，非承诺释放量。压力恢复时立即停止新增候选；采样中断超过 30 秒或时钟回退则重置持续时间。
@@ -28,7 +36,7 @@
 
 | ID | 类型 | 问题与量表 |
 |---|---|---|
-| `memory_urgency` | Score | 根据 OS 内存压力及持续时间，缓解压力有多紧迫？等级 0–3：正常无回收需求；短时升高继续观察；持续升高值得干预；持续 critical 优先处理。占用比例或累计 Swap 不能单独证明当前压力。 |
+| `memory_urgency` | Score | 根据内存压力等级及持续时间，缓解压力有多紧迫？等级 0–3：正常无回收需求；短时升高继续观察；持续升高值得干预；持续 critical 优先处理。观测中的压力等级已按口径合并 OS 事件与指标推断；占用比例与 Swap 的原始值不另作独立的压力证据。 |
 | `cpu_urgency` | Score | 根据全机 CPU、持续时间及候选贡献，降低后台 CPU 竞争有多紧迫？等级 0–3：有余量；短时高负载或后台贡献小；持续高负载且后台贡献明显；持续接近饱和且后台贡献明显。不能凭 CPU 推断界面卡顿。 |
 | `app_N_work_related` | Noul | 候选是否直接支持当前前台应用所代表的工作？共同安装不是关联证据；缺少工作上下文不等于无关联。 |
 | `app_N_continuous_service` | Noul | 候选用途是否需要持续后台运行，例如同步、传输、通信、连接维护、录制或任务执行？判断用途，不声称当前任务正在运行。 |

@@ -98,8 +98,7 @@ public struct HostMemory: Sendable, Equatable {
         }
         if sourceLevel == .warning
             || compressedRatio > 0.25
-            || usedRatio > 0.88
-            || swapUsedBytes > 256 * 1024 * 1024 {
+            || usedRatio > 0.75 {
             return .warning
         }
         return .normal
