@@ -131,6 +131,15 @@ public final class ActionExecutor: @unchecked Sendable {
     }
 
     public func execute(action: SuggestedAction, snapshots: [ProcessSnapshot], groupBundleID: String?) -> ActionResult {
+        if action == .quit,
+           !UserFacingAppPolicy.canRequestQuit(snapshots: snapshots, bundleID: groupBundleID) {
+            return ActionResult(
+                ok: false,
+                message: "只能请求有应用身份的普通 App 退出；此进程不支持该操作。",
+                action: .quit,
+                pid: snapshots.first?.pid ?? 0
+            )
+        }
         if action == .freeze {
             return ActionResult(
                 ok: false,
@@ -416,6 +425,7 @@ public final class ActionExecutor: @unchecked Sendable {
         for snapshot in roots {
             guard let app = NSRunningApplication(processIdentifier: snapshot.pid) else { continue }
             if let bundleID, app.bundleIdentifier != bundleID { continue }
+            if app.activationPolicy != .regular { continue }
             if let denied = denyIfUnsafe(snapshot) { return denied }
             if let mismatch = generationMismatch(expected: snapshot.generation, pid: snapshot.pid) {
                 return ActionResult(ok: false, message: mismatch, action: .quit, pid: snapshot.pid)
@@ -424,7 +434,7 @@ public final class ActionExecutor: @unchecked Sendable {
                 return ActionResult(ok: true, message: "已请求 \(snapshot.processName) 退出。若有未保存内容，应用会自行提示。", action: .quit, pid: snapshot.pid)
             }
         }
-        return ActionResult(ok: false, message: "无法通过系统接口请求退出已校验的应用。未执行强制结束。", action: .quit, pid: snapshots.first?.pid ?? 0)
+        return ActionResult(ok: false, message: "系统未接受该应用的退出请求，或应用已退出。未执行强制结束。", action: .quit, pid: snapshots.first?.pid ?? 0)
     }
 
     private func denyIfCategoryBanned(action: SuggestedAction, snapshots: [ProcessSnapshot]) -> ActionResult? {

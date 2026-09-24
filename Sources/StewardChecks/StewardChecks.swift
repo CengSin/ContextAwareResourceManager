@@ -1024,6 +1024,34 @@ enum StewardChecks {
         throttleExecutor.lookupGeneration = { pid in ProcessGeneration(pid: pid, startUnix: 1) }
         check("reused PID rejects throttle", !throttleExecutor.execute(action: .throttle, snapshot: throttleSnapshot).ok)
         check("reused PID rejects quit", !throttleExecutor.execute(action: .quit, snapshot: throttleSnapshot).ok)
+        let daemonSnapshot = ProcessSnapshot(
+            pid: 9762, uid: UInt32(getuid()), bundleID: nil, processName: "duetexpertd",
+            path: "/usr/libexec/duetexpertd", memoryFootprintMB: 16, cpuPercent: 50,
+            isForeground: false, idleSeconds: 10_000
+        )
+        let daemonGroup = ProcessGroupViewModel(
+            key: "pid:9762",
+            members: [ProcessViewModel(snapshot: daemonSnapshot,
+                score: ReclaimScorer.score(snapshot: daemonSnapshot, workspace: nil), appPath: nil)]
+        )
+        check("daemon row offers no quit action", !daemonGroup.canRequestQuit)
+        let refusedDaemonQuit = ActionExecutor().execute(action: .quit, snapshot: daemonSnapshot)
+        check("daemon quit is rejected before system request",
+            !refusedDaemonQuit.ok && refusedDaemonQuit.message.contains("不支持该操作"))
+        let regularAppSnapshot = ProcessSnapshot(
+            pid: 42, uid: UInt32(getuid()), bundleID: "com.example.app", processName: "Example",
+            path: "/Applications/Example.app/Contents/MacOS/Example", memoryFootprintMB: 100,
+            cpuPercent: 1, isForeground: false, idleSeconds: 10_000
+        )
+        check("regular bundled app remains quit eligible",
+            UserFacingAppPolicy.canRequestQuit(snapshots: [regularAppSnapshot], bundleID: "com.example.app"))
+        let accessorySnapshot = ProcessSnapshot(
+            pid: 43, uid: UInt32(getuid()), bundleID: "com.apple.Safari", processName: "Safari",
+            memoryFootprintMB: 100, cpuPercent: 1, isForeground: false,
+            isAccessory: true, isRegularApp: false, idleSeconds: 10_000
+        )
+        check("accessory process cannot request quit",
+            !UserFacingAppPolicy.canRequestQuit(snapshots: [accessorySnapshot], bundleID: "com.apple.Safari"))
         throttleSleep.terminate()
         throttleSleep.waitUntilExit()
 

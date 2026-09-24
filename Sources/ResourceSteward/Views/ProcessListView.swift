@@ -362,7 +362,8 @@ private struct ProcessGroupRow: View, Equatable {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
-                    } else if group.effectiveSuggestion != .none && !group.isForeground && !group.isProtected {
+                    } else if group.effectiveSuggestion != .none && !group.isForeground && !group.isProtected
+                        && (group.effectiveSuggestion != .quit || group.canRequestQuit) {
                         Button(actionButtonTitle) {
                             coordinator.request(group.effectiveSuggestion, for: group)
                         }
@@ -444,7 +445,7 @@ private struct ProcessGroupRow: View, Equatable {
                                 coordinator.request(action, for: group)
                             }
                             .controlSize(.mini)
-                            .disabled(group.isForeground || group.isProtected)
+                            .disabled(group.isForeground || group.isProtected || (action == .quit && !group.canRequestQuit))
                         }
 
                         Spacer()
@@ -492,7 +493,9 @@ private struct ProcessGroupRow: View, Equatable {
     }
 
     private var alternateActions: [SuggestedAction] {
-        SuggestedAction.userSelectable.filter { $0 != group.effectiveSuggestion }
+        SuggestedAction.userSelectable.filter { action in
+            action != group.effectiveSuggestion && (action != .quit || group.canRequestQuit)
+        }
     }
 
     private var statusAction: SuggestedAction {

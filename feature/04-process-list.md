@@ -6,7 +6,7 @@
 - 关键选择器：`button "进程" of window 1`；搜索框: `text field 1` (Placeholder=`"搜索应用或进程..."`)；开关: `checkbox "只看建议"` (AXRole=`AXCheckBox`)；排序维度按钮: `button "默认 排序"`, `button "CPU 排序"`, `button "GPU 排序"`, `button "内存 排序"`；排序顺序切换: `button "切换排序顺序，当前降序"` / `button "切换排序顺序，当前升序"`；操作按钮: `button "降优先级"`, `button "退出"`, `button "恢复优先级"`, `button "恢复"`；行内评分胶囊: `AXStaticText` (0-100)；折叠展开触发: 行单击事件；次级动作: `button "设为常用"` / `button "取消常用"`, `button "不再建议"`
 - 子功能：运行中应用与进程实时列表浏览、应用名/PID/Bundle ID 模糊搜索、“只看建议”一键过滤白名单与前台、多维度排序（默认综合评分、CPU占用率、GPU占用率、内存占用率，支持升序/降序切换）、进程族与 Helper 自动并组、展开查看多维度评分明细与进程拓扑树、降低/恢复 Darwin 后台调度优先级、请求应用优雅退出、常用加白与加入黑名单
 - 前置条件：系统有正在运行的用户级进程；SystemMonitor 周期性更新正常
-- 常见故障现象：列表显示“当前没有建议降级或退出的应用” → 开启了“只看建议”，当前运行应用全部处于前台或常用保护中，关掉开关即可查看全量；操作按钮置灰不可点击 → 该应用当前处于前台活跃状态
+- 常见故障现象：列表显示“当前没有建议降级或退出的应用” → 开启了“只看建议”，当前运行应用全部处于前台或常用保护中，关掉开关即可查看全量；操作按钮置灰不可点击 → 该应用当前处于前台活跃状态。没有 App Bundle ID 的后台服务仍可浏览，但不显示“退出”操作。
 
 ---
 
@@ -43,7 +43,7 @@
 |---|---|---|---|---|---|
 | 评分明细条目 | `ScoreBreakdownView` | `AXGroup` | 展开区顶部 | 展示各打分项条状图：CPU、内存、空闲时长、前台惩罚、常用惩罚等 | 透析算法得分根据 |
 | 进程拓扑树 | `ForEach(group.members)` | `AXGroup` | 树状缩进列表 | 展示主进程及关联 Helper/Renderer 的 PID、内存及角色标签（如 `Renderer`, `GPU`） | 了解应用进程拓扑 |
-| 备选动作按钮组 | `ForEach(alternateActions)` | `AXButton` | 底部动作栏左侧 | `"降优先级"`, `"退出"` | 允许用户自主选择备选动作 |
+| 备选动作按钮组 | `ForEach(alternateActions)` | `AXButton` | 底部动作栏左侧 | `"降优先级"`, `"退出"` | 允许用户自主选择备选动作；只有识别为普通用户 App 的应用族显示“退出” |
 | 常用切换按钮 | `Button` | `AXButton` | `button "设为常用"` / `button "取消常用"` | `"设为常用"` 或 `"取消常用"` | 加入或移除保活白名单 |
 | 不再建议按钮 | `Button("不再建议")` | `AXButton` | `button "不再建议"` | `"不再建议"` | 将应用移入黑名单不再产生打分建议 |
 
@@ -106,3 +106,5 @@ filterToggle.click()
 列表建议来自 [JevDecisionPipeline](JevDecisionPipeline/README.md)：本地按持续负载筛选候选，Score/Noul 评估后由第二次 Choice 请求选择受限动作。未通过保护、候选条件、语义门槛或置信度校验时保留。
 
 - 应用族向 Jev 提交主应用 Bundle ID 与主应用属性，Helper 的内存并入整组；占用最大的 Renderer 不会让整组被当作独立 Helper 过滤。无主应用的 Helper 组、前台及常用保活对象继续受保护。
+
+手动“退出”只对具有匹配 Bundle ID、普通 App 身份和主进程的应用族开放。执行时再次核对，身份不符会返回具体拒绝原因；系统接受正常退出请求只表示已发出请求，不强制结束应用。可用 `swift run StewardChecks` 检查无 Bundle ID 的后台服务不可退出，普通 App 仍可请求退出。

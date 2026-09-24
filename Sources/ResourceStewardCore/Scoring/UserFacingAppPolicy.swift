@@ -6,6 +6,26 @@ import Foundation
 
 
 public enum UserFacingAppPolicy: Sendable {
+    public static func canRequestQuit(snapshots: [ProcessSnapshot], bundleID: String?) -> Bool {
+        guard let bundleID, !bundleID.isEmpty else { return false }
+        return snapshots.contains { snapshot in
+            guard let id = snapshot.bundleID,
+                  ProcessFamily.rootBundleID(from: id) == bundleID,
+                  snapshot.isRegularApp,
+                  !snapshot.isAccessory,
+                  !ProcessFamily.isCompanion(bundleID: id, processName: snapshot.processName) else {
+                return false
+            }
+            return isSuggestable(
+                bundleID: id,
+                processName: snapshot.processName,
+                path: snapshot.path,
+                isAccessory: snapshot.isAccessory,
+                isRegularApp: snapshot.isRegularApp
+            )
+        }
+    }
+
     
     public static let appleUserBundleIDs: Set<String> = [
         "com.apple.safari",

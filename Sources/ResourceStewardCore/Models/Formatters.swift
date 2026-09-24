@@ -173,6 +173,13 @@ public struct ProcessGroupViewModel: Identifiable, Sendable, Equatable {
         if appliedAction == .throttle && suggested == .throttle { return .none }
         return suggested
     }
+
+    public var canRequestQuit: Bool {
+        UserFacingAppPolicy.canRequestQuit(
+            snapshots: members.map(\.snapshot),
+            bundleID: key.hasPrefix("pid:") ? primary.snapshot.bundleID : key
+        )
+    }
 }
 
 public struct RunningAppInfo: Identifiable, Hashable, Sendable {
