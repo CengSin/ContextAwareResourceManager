@@ -4,7 +4,7 @@ import ProcBridge
 
 public final class SystemMonitor: @unchecked Sendable {
     
-    public static let gpuSampleIntervalSeconds: TimeInterval = 20
+    public static let gpuSampleIntervalSeconds: TimeInterval = 5
 
     private let lock = NSLock()
     private var previousCPU: RSHostCPUTicks?
@@ -132,7 +132,10 @@ public final class SystemMonitor: @unchecked Sendable {
             available: true,
             memoryUsedAvailable: raw.memory_used_available != 0,
             memoryTotalAvailable: raw.memory_total_available != 0,
-            sampledAt: now
+            sampledAt: now,
+            memoryIsGARTWindow: raw.memory_is_gart_window != 0,
+            nominalVRAMBytes: raw.nominal_vram_bytes,
+            recoveryCount: raw.recovery_count_available != 0 ? raw.recovery_count : nil
         )
         lastGPU = sampled
         lastGPUSampleAt = now

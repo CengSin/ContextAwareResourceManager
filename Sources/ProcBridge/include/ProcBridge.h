@@ -68,6 +68,13 @@ typedef struct {
     int memory_used_available;
     int memory_total_available;
     char name[64];
+    /// 1 when used/total are the driver's GART window (shared-memory GPUs).
+    int memory_is_gart_window;
+    /// "VRAM,totalMB" as advertised by the driver; 0 when absent.
+    uint64_t nominal_vram_bytes;
+    /// Driver GPU restart counter ("recoveryCount"); valid when recovery_count_available.
+    uint64_t recovery_count;
+    int recovery_count_available;
 } RSHostGPU;
 
 /// Fills aggregated CPU tick counters since boot. Returns 0 on success.

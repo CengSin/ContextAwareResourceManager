@@ -41,6 +41,12 @@ public struct HostGPU: Sendable, Equatable {
     public let memoryUsedAvailable: Bool
     public let memoryTotalAvailable: Bool
     public let sampledAt: Date?
+    public let memoryIsGARTWindow: Bool
+    public let nominalVRAMBytes: UInt64
+    public let recoveryCount: UInt64?
+
+    public static let sharedMemoryWarningRatio = 0.75
+    public static let sharedMemoryCriticalRatio = 0.90
 
     public init(
         usagePercent: Double,
@@ -50,7 +56,10 @@ public struct HostGPU: Sendable, Equatable {
         available: Bool,
         memoryUsedAvailable: Bool? = nil,
         memoryTotalAvailable: Bool? = nil,
-        sampledAt: Date? = nil
+        sampledAt: Date? = nil,
+        memoryIsGARTWindow: Bool = false,
+        nominalVRAMBytes: UInt64 = 0,
+        recoveryCount: UInt64? = nil
     ) {
         self.usagePercent = min(100, max(0, usagePercent))
         self.memoryUsedBytes = memoryUsedBytes
@@ -60,6 +69,9 @@ public struct HostGPU: Sendable, Equatable {
         self.memoryUsedAvailable = memoryUsedAvailable ?? (available && memoryTotalBytes > 0)
         self.memoryTotalAvailable = memoryTotalAvailable ?? (available && memoryTotalBytes > 0)
         self.sampledAt = available ? (sampledAt ?? Date()) : nil
+        self.memoryIsGARTWindow = available && memoryIsGARTWindow
+        self.nominalVRAMBytes = nominalVRAMBytes
+        self.recoveryCount = available ? recoveryCount : nil
     }
 
     public static let unavailable = HostGPU(usagePercent: 0, available: false)
@@ -75,6 +87,18 @@ public struct HostGPU: Sendable, Equatable {
     public var isSharedMemory: Bool {
         let lower = name.lowercased()
         return lower.contains("intel") || lower.contains("agx") || lower.contains("apple")
+    }
+
+    public var sharedMemoryUsedRatio: Double? {
+        guard available, isSharedMemory, memoryIsGARTWindow, memoryUsedAvailable, memoryTotalBytes > 0 else { return nil }
+        return min(1, Double(memoryUsedBytes) / Double(memoryTotalBytes))
+    }
+
+    public var sharedMemoryPressure: MemoryPressureLevel {
+        guard let ratio = sharedMemoryUsedRatio else { return .normal }
+        if ratio >= Self.sharedMemoryCriticalRatio { return .critical }
+        if ratio >= Self.sharedMemoryWarningRatio { return .warning }
+        return .normal
     }
 
     public var memoryKindName: String {

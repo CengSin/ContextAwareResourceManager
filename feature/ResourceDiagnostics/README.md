@@ -17,6 +17,7 @@
 | `app_started` / `app_stopping` | PID、应用版本、构建时间/修订（构建脚本提供时）、OS、系统 uptime；没有 stopping 不能单独证明崩溃 |
 | `settings_saved` / `credential_updated` | 授权级别、采样间隔、Jev 开关/可用性、常用 bundle ID；凭据只记是否配置 |
 | `resource_sample` | RAM、压缩、wired、free、purgeable、Swap 存量/累计页数/变化速率、CPU、GPU、驱动显存计数器、前台 bundle、最多 12 个主要应用与硬门排除原因 |
+| `gpu_restart` | 驱动 `recoveryCount`（GPU 重启计数）较上次采样增加时立即记录：前后计数、当时合成压力、GPU 共享显存比例、Swap/内存用量、前台 bundle；用于区分 GPU 挂起与内存压力导致的卡死 |
 | `jev_selection` | 没有发起请求的原因、候选资源与未入选原因、请求等待剩余秒数、是否仍有旧网络批次 |
 | `jev_request_start` | 实际送入的负载、候选身份/资源、允许动作和模型标识，不含应用名称或完整请求体 |
 | `jev_stage_start` / `jev_stage_complete` | 阶段、HTTP 状态和延时；第一阶段开始由 request_start 表示 |
@@ -29,7 +30,7 @@
 | `action_observed` | 动作至少 5 秒、30 秒后的下一次采样：原进程仍运行/退出/PID 复用/无法确认，目标内存/CPU 与系统用量变化 |
 | `action_observation_incomplete` / `storage_error` | 应用停止时观测未完成、数据库写入失败操作及错误码 |
 
-资源记录每 30 秒一次，系统事件压力或推断压力变化时立即记录。Swap 速率取相邻采样的计数器差值；超过 60 秒的采样间隔、计数器回退和无有效内存采样时为 null。GPU 可用性与显存计数器可用性分开记录；GPU 为已有采样器的 20 秒缓存/中位数，附采样时间。共享/统一内存驱动计数器不等同独立显存容量。
+资源记录每 30 秒一次，系统事件压力或推断压力变化时立即记录。Swap 速率取相邻采样的计数器差值；超过 60 秒的采样间隔、计数器回退和无有效内存采样时为 null。GPU 可用性与显存计数器可用性分开记录；GPU 采样器 5 秒缓存，引擎占用取最近 5 次中位数，显存计数取当次值，附采样时间。共享/统一内存驱动计数器不等同独立显存容量。Intel 核显的显存用量取 GART 窗口（`gartUsedBytes / gartSizeBytes`，`gpu_memory_source=gart_window`），`VRAM,totalMB` 只是驱动标称值，另记为 `gpu_nominal_vram_bytes`；`inUseSysMemoryBytes` 在实测中出现负数回绕，不使用。`gpu_recovery_count` 为驱动 GPU 重启计数，读不到时为 null。
 
 `os_pressure_event` 是最后一次 DispatchSource 事件，初始化为 normal；`effective_pressure` 是 app 合成压力，`pressure_reasons` 给出触发来源。两者不能混称 OS 压力。采样失败使用 availability 标志，不能把零数值认定为资源充足。
 

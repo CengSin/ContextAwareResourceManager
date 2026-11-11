@@ -294,7 +294,7 @@ public final class AppCoordinator: ObservableObject {
             cpu: cpu,
             gpu: gpu,
             sourcePressure: pressureLevel,
-            pressure: host.inferredPressure(sourceLevel: pressureLevel),
+            pressure: host.inferredPressure(sourceLevel: pressureLevel).merged(with: gpu.sharedMemoryPressure),
             snapshots: snapshots,
             windowOwnerPIDs: windowOwnerPIDs,
             groups: grouped,
@@ -325,7 +325,9 @@ public final class AppCoordinator: ObservableObject {
                 : Double(tick.host.usedBytes) / Double(tick.host.physicalBytes),
             swap_used_mb: Double(tick.host.swapUsedBytes) / 1_048_576,
             foreground_bundle_id: collector.lastForegroundBundleID ?? "",
-            foreground_name: collector.lastForegroundName ?? ""
+            foreground_name: collector.lastForegroundName ?? "",
+            gpu_percent: tick.gpu.available ? tick.gpu.usagePercent : nil,
+            gpu_shared_memory_used_ratio: tick.gpu.sharedMemoryUsedRatio
         )
         let grayApps = JevGrayZone.apps(
             groups: tick.groups,

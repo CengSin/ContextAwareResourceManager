@@ -267,15 +267,16 @@ struct MenuBarPanel: View {
         guard coordinator.hostGPU.available else { return "当前无法读取" }
         let gpu = coordinator.hostGPU
         let name = gpu.displayName
-        if gpu.memoryUsedBytes > 0 || gpu.memoryTotalBytes > 0 {
+        let restarts = (gpu.recoveryCount ?? 0) > 0 ? " · 重启 \(gpu.recoveryCount ?? 0) 次" : ""
+        if gpu.memoryUsedAvailable {
             let used = ByteFormat.string(gpu.memoryUsedBytes)
             if gpu.memoryTotalBytes > 0 {
                 let total = ByteFormat.string(gpu.memoryTotalBytes)
-                return "\(name) · \(gpu.memoryKindName) \(used) / \(total)"
+                return "\(name) · \(gpu.memoryKindName) \(used) / \(total)\(restarts)"
             }
-            return "\(name) · \(gpu.memoryKindName) \(used)"
+            return "\(name) · \(gpu.memoryKindName) \(used)\(restarts)"
         }
-        return "\(name) · 引擎占用"
+        return "\(name) · 显存计数不可读\(restarts)"
     }
 
     private var matchCaption: String {

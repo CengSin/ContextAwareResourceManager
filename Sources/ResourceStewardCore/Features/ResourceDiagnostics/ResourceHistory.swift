@@ -4,6 +4,7 @@ public final class ResourceHistory {
     private var lastRecord = Date.distantPast
     private var lastPressure = ""
     private var previous: (HostMemory, Date)?
+    private var lastGPURecoveryCount: UInt64?
 
     private let log: DiagnosticLog
 
@@ -12,6 +13,16 @@ public final class ResourceHistory {
     public func sample(host: HostMemory, cpu: HostCPU, gpu: HostGPU, source: MemoryPressureLevel,
                        load: JevLoadState, snapshots: [ProcessSnapshot], groups: [ProcessGroupViewModel],
                        favorites: Set<String>, authorization: Int, jevActive: Bool, at now: Date) {
+        if let count = gpu.recoveryCount {
+            if let last = lastGPURecoveryCount, count > last {
+                log.record("gpu_restart", ["previous_count": last, "count": count,
+                    "effective_pressure": load.memory_pressure,
+                    "gpu_shared_memory_used_ratio": gpu.sharedMemoryUsedRatio as Any? ?? NSNull(),
+                    "swap_used_bytes": host.swapUsedBytes, "used_bytes": host.usedBytes,
+                    "physical_bytes": host.physicalBytes, "foreground_bundle_id": load.foreground_bundle_id], at: now)
+            }
+            lastGPURecoveryCount = count
+        }
         let interval = previous.map { now.timeIntervalSince($0.1) }
         let stamp = source.rawValue + ":" + load.memory_pressure
         let due = now.timeIntervalSince(lastRecord) >= 30 || lastPressure != stamp || now < lastRecord
@@ -23,7 +34,7 @@ public final class ResourceHistory {
         fields["os_pressure_event"] = source.rawValue
         fields["os_pressure_note"] = "last_dispatch_event_initially_normal"
         fields["effective_pressure"] = load.memory_pressure
-        fields["pressure_reasons"] = Self.pressureReasons(host: host, source: source)
+        fields["pressure_reasons"] = Self.pressureReasons(host: host, source: source, gpu: gpu)
         fields["memory_pressure_seconds"] = load.memory_pressure_seconds
         fields["cpu_pressure_seconds"] = load.cpu_pressure_seconds
         fields["sample_gap_seconds"] = interval as Any? ?? NSNull()
@@ -58,12 +69,17 @@ public final class ResourceHistory {
         log.record("resource_sample", fields, at: now)
     }
 
-    public static func pressureReasons(host: HostMemory, source: MemoryPressureLevel) -> [String] {
+    public static func pressureReasons(host: HostMemory, source: MemoryPressureLevel, gpu: HostGPU = .unavailable) -> [String] {
         var reasons: [String] = []
         if source != .normal { reasons.append("os_" + source.rawValue) }
         if host.swapUsedBytes > 1_073_741_824 { reasons.append("swap_stock_over_1gib") }
         if host.compressedRatio > 0.25 { reasons.append("compressed_over_25_percent") }
         if host.usedRatio > 0.75 { reasons.append("used_over_75_percent") }
+        switch gpu.sharedMemoryPressure {
+        case .critical: reasons.append("gpu_shared_memory_over_90_percent")
+        case .warning: reasons.append("gpu_shared_memory_over_75_percent")
+        case .normal: break
+        }
         if host.physicalBytes == 0 { reasons.append("host_sample_unavailable") }
         return reasons.isEmpty ? ["below_thresholds"] : reasons
     }
@@ -81,6 +97,10 @@ public final class ResourceHistory {
          "gpu_memory_total_bytes": gpu.available && gpu.memoryTotalAvailable ? gpu.memoryTotalBytes as Any : NSNull(),
          "gpu_sampled_at": gpu.sampledAt?.timeIntervalSince1970 as Any? ?? NSNull(),
          "gpu_memory_kind": gpu.memoryKindName, "gpu_memory_note": "driver_counter_not_dedicated_vram_capacity",
+         "gpu_memory_source": gpu.memoryIsGARTWindow ? "gart_window" : "driver_counter",
+         "gpu_shared_memory_used_ratio": gpu.sharedMemoryUsedRatio as Any? ?? NSNull(),
+         "gpu_nominal_vram_bytes": gpu.available && gpu.nominalVRAMBytes > 0 ? gpu.nominalVRAMBytes as Any : NSNull(),
+         "gpu_recovery_count": gpu.recoveryCount as Any? ?? NSNull(),
          "gpu_sampling_interval_seconds": SystemMonitor.gpuSampleIntervalSeconds]
     }
 }

@@ -215,6 +215,29 @@ static int rs_copy_u64(CFDictionaryRef dict, CFStringRef key, uint64_t *out) {
     return 1;
 }
 
+/// Intel publishes some byte counters as signed 32-bit CFNumbers that wrap
+/// past 2 GiB. Reinterpret only 32-bit-typed negatives as uint32; a negative
+/// 64-bit value is a driver accounting underflow and stays rejected.
+static int rs_copy_u64_wrapped32(CFDictionaryRef dict, CFStringRef key, uint64_t *out) {
+    if (rs_copy_u64(dict, key, out)) {
+        return 1;
+    }
+    CFTypeRef value = dict ? CFDictionaryGetValue(dict, key) : NULL;
+    if (value == NULL || CFGetTypeID(value) != CFNumberGetTypeID()) {
+        return 0;
+    }
+    CFNumberType type = CFNumberGetType((CFNumberRef)value);
+    if (type != kCFNumberSInt32Type && type != kCFNumberIntType) {
+        return 0;
+    }
+    int32_t raw = 0;
+    if (!CFNumberGetValue((CFNumberRef)value, kCFNumberSInt32Type, &raw)) {
+        return 0;
+    }
+    *out = (uint64_t)(uint32_t)raw;
+    return 1;
+}
+
 /// Instant engine occupancy. Prefer "Device Utilization %".
 /// Do not use "Device Utilization % at cur p-state": at a low p-state even
 /// scanout can read as 100%. "GPU Activity(%)" on Intel is often a sticky 0/100.
@@ -251,16 +274,34 @@ int rs_host_gpu(RSHostGPU *out) {
                 int has_util = rs_copy_gpu_util(perf, &util);
                 uint64_t used = 0;
                 uint64_t total = 0;
-                int has_used = rs_copy_u64(perf, CFSTR("gartUsedBytes"), &used);
-                if (!has_used) {
-                    has_used = rs_copy_u64(perf, CFSTR("In use system memory"), &used);
-                }
+                int has_used = 0;
+                int is_gart = 0;
+                uint64_t nominal = 0;
                 uint64_t vram_mb = 0;
                 if (rs_copy_u64(props, CFSTR("VRAM,totalMB"), &vram_mb) && vram_mb > 0) {
-                    total = vram_mb * 1024 * 1024;
-                } else if (!rs_copy_u64(perf, CFSTR("gartSizeBytes"), &total)) {
-                    rs_copy_u64(perf, CFSTR("Alloc system memory"), &total);
+                    nominal = vram_mb * 1024 * 1024;
                 }
+                // Intel iGPUs: gartUsedBytes / gartSizeBytes is the GPU's window into
+                // system RAM. "VRAM,totalMB" (1536 MB) is only the advertised size and
+                // usage regularly exceeds it, so it is not a usable denominator.
+                uint64_t gart_used = 0;
+                uint64_t gart_size = 0;
+                if (rs_copy_u64(perf, CFSTR("gartSizeBytes"), &gart_size) && gart_size > 0 &&
+                    rs_copy_u64_wrapped32(perf, CFSTR("gartUsedBytes"), &gart_used) && gart_used <= gart_size) {
+                    used = gart_used;
+                    total = gart_size;
+                    has_used = 1;
+                    is_gart = 1;
+                } else {
+                    has_used = rs_copy_u64(perf, CFSTR("In use system memory"), &used);
+                    if (nominal > 0) {
+                        total = nominal;
+                    } else {
+                        rs_copy_u64(perf, CFSTR("Alloc system memory"), &total);
+                    }
+                }
+                uint64_t recovery = 0;
+                int has_recovery = rs_copy_u64(perf, CFSTR("recoveryCount"), &recovery);
                 // Prefer the accelerator that actually owns a GART/VRAM window.
                 // Taking max(utilization) used to pick a busy compositor helper
                 // and show 100% while the real GPU was nearly idle.
@@ -272,6 +313,10 @@ int rs_host_gpu(RSHostGPU *out) {
                     out->memory_total_bytes = total;
                     out->memory_used_available = has_used;
                     out->memory_total_available = total > 0;
+                    out->memory_is_gart_window = is_gart;
+                    out->nominal_vram_bytes = nominal;
+                    out->recovery_count = recovery;
+                    out->recovery_count_available = has_recovery;
                     io_name_t name;
                     if (IORegistryEntryGetName(entry, name) == KERN_SUCCESS) {
                         strncpy(out->name, name, sizeof(out->name) - 1);

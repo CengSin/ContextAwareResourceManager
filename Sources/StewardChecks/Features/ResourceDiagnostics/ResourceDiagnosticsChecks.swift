@@ -70,6 +70,14 @@ enum ResourceDiagnosticsChecks {
         check("history includes authorization and pressure provenance", historyRows.last?["authorization_level"] as? Int == 0 && historyRows.last?["os_pressure_event"] as? String == "warning")
         let partialGPU = HostGPU(usagePercent: 40, memoryTotalBytes: 1024, available: true, memoryUsedAvailable: false)
         check("missing GPU memory counter stays null even with utilization", ResourceHistory.hostFields(host: .empty, cpu: .empty, gpu: partialGPU)["gpu_memory_used_bytes"] is NSNull)
+        let restartHistory = ResourceHistory(log: evidenceLog)
+        for (offset, count) in [(0.0, UInt64(2)), (5, 2), (10, 3)] {
+            let gpu = HostGPU(usagePercent: 10, memoryUsedBytes: 100, memoryTotalBytes: 1000, name: "IntelAccelerator", available: true, memoryUsedAvailable: true, memoryIsGARTWindow: true, recoveryCount: count)
+            restartHistory.sample(host: .empty, cpu: .empty, gpu: gpu, source: .normal, load: load, snapshots: [], groups: [], favorites: [], authorization: 0, jevActive: false, at: base.addingTimeInterval(100 + offset))
+        }
+        evidenceLog.flush()
+        let restartRows = try String(contentsOf: evidenceDir.appendingPathComponent("events.jsonl"), encoding: .utf8).split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }.filter { $0["event"] as? String == "gpu_restart" }
+        check("gpu restart logged once when recoveryCount increases", restartRows.count == 1 && (restartRows.first?["count"] as? Int) == 3)
         let generation = ProcessGeneration(pid: 123, startUnix: 100)
         check("action observation distinguishes running from exited", ActionDiagnostics.processState(expected: generation, current: generation, definitelyGone: false) == "running" && ActionDiagnostics.processState(expected: generation, current: nil, definitelyGone: true) == "exited")
         check("action observation never treats unreadable PID as exited", ActionDiagnostics.processState(expected: generation, current: nil, definitelyGone: false) == "unknown")

@@ -6,7 +6,7 @@ public enum JevAssessmentQuestions {
         var questions: [String: Any] = [
             "memory_urgency": [
                 "type": "score",
-                "instructions": boundary + "How urgently should memory pressure be relieved, given OS memory pressure and its observed duration? Memory usage and accumulated swap alone do not establish active pressure.",
+                "instructions": boundary + "How urgently should memory pressure be relieved, given OS memory pressure and its observed duration? Memory usage and accumulated swap alone do not establish active pressure. On shared-memory GPUs the given pressure level already includes GPU shared-memory (GART) usage; gpu_shared_memory_used_ratio is that same signal, not separate evidence.",
                 "criteria": [
                     "OS memory pressure is normal, with no observed need to reclaim memory.",
                     "Elevated memory pressure is brief; continued observation is appropriate.",

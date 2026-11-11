@@ -15,6 +15,7 @@
 
 - OS 事件：critical/warning 直接采用；指标不降级 OS 已报告的压力。
 - 指标推断：Swap 已用 > 1 GB 判 critical；压缩率 > 25% 或内存用量（internal + wired + compressed）> 75% 判 warning。
+- 共享显存（仅 Intel 核显 GART 窗口）：`gartUsedBytes / gartSizeBytes` ≥ 75% 判 warning，≥ 90% 判 critical，与上面两项取较高者。核显显存就是系统内存，因此并入同一压力等级，复用内存候选与 quit 规则；Apple Silicon 的 `Alloc system memory` 不是容量上限、独显 VRAM 不是系统内存，两者都不参与。负载中附 `gpu_percent`、`gpu_shared_memory_used_ratio` 供模型参考，后者与压力等级是同一信号。
 - 只使用当前采样值判定，累计 swapins/swapouts 不参与。
 
 ## 本地候选算法

@@ -47,6 +47,8 @@ public struct JevLoadState: Codable, Sendable, Equatable {
     public var memory_pressure_seconds: Double
     public var cpu_pressure_seconds: Double
     public var foreground_name: String
+    public var gpu_percent: Double?
+    public var gpu_shared_memory_used_ratio: Double?
 
     public init(
         memory_pressure: String,
@@ -56,7 +58,9 @@ public struct JevLoadState: Codable, Sendable, Equatable {
         foreground_bundle_id: String = "",
         foreground_name: String = "",
         memory_pressure_seconds: Double = 0,
-        cpu_pressure_seconds: Double = 0
+        cpu_pressure_seconds: Double = 0,
+        gpu_percent: Double? = nil,
+        gpu_shared_memory_used_ratio: Double? = nil
     ) {
         self.memory_pressure = memory_pressure
         self.cpu_percent = cpu_percent
@@ -66,6 +70,8 @@ public struct JevLoadState: Codable, Sendable, Equatable {
         self.foreground_name = foreground_name
         self.memory_pressure_seconds = memory_pressure_seconds
         self.cpu_pressure_seconds = cpu_pressure_seconds
+        self.gpu_percent = gpu_percent
+        self.gpu_shared_memory_used_ratio = gpu_shared_memory_used_ratio
     }
 }
 

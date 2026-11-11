@@ -198,7 +198,7 @@ enum StewardChecks {
             "missing sampleIntervalSeconds decodes to 5",
             abs(decodedIntervalDefault.sampleIntervalSeconds - 5) < 0.001
         )
-        check("gpu sample interval is 20s", abs(SystemMonitor.gpuSampleIntervalSeconds - 20) < 0.001)
+        check("gpu sample interval is 5s", abs(SystemMonitor.gpuSampleIntervalSeconds - 5) < 0.001)
 
         check("threshold none", ReclaimScorer.suggestedAction(for: 10) == .none)
         check("threshold throttle", ReclaimScorer.suggestedAction(for: 30) == .throttle)
@@ -818,7 +818,10 @@ enum StewardChecks {
             check("live gpu sample available", true)
             check("live gpu percent in range", gpu.usagePercent >= 0 && gpu.usagePercent <= 100)
             if gpu.displayName.contains("Intel") {
-                check("live gpu intel total memory is 1.5GB", gpu.memoryTotalBytes == 1536 * 1024 * 1024)
+                check("live gpu intel nominal VRAM is advertised", gpu.nominalVRAMBytes > 0)
+                if gpu.memoryIsGARTWindow {
+                    check("live gpu intel GART usage within window", gpu.memoryUsedBytes <= gpu.memoryTotalBytes && gpu.sharedMemoryUsedRatio != nil)
+                }
             }
         } else {
             print("skip live gpu sample (no IOAccelerator on this host)")
@@ -831,6 +834,16 @@ enum StewardChecks {
         check("gpu intel memory kind", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "IntelAccelerator", available: true).memoryKindName == "共享显存")
         check("gpu apple memory kind", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "AGXAcceleratorG13G", available: true).memoryKindName == "统一内存")
         check("gpu amd memory kind", HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "AMDAccelerator", available: true).memoryKindName == "显存")
+        let gartGPU = { (used: UInt64) in HostGPU(usagePercent: 10, memoryUsedBytes: used, memoryTotalBytes: 1000, name: "IntelAccelerator", available: true, memoryUsedAvailable: true, memoryTotalAvailable: true, memoryIsGARTWindow: true, nominalVRAMBytes: 1536 * 1024 * 1024, recoveryCount: 0) }
+        check("gpu GART below 75 percent is normal", gartGPU(740).sharedMemoryPressure == .normal)
+        check("gpu GART at 75 percent warns", gartGPU(750).sharedMemoryPressure == .warning)
+        check("gpu GART at 90 percent is critical", gartGPU(900).sharedMemoryPressure == .critical)
+        check("gpu non-GART counter never drives pressure", HostGPU(usagePercent: 10, memoryUsedBytes: 999, memoryTotalBytes: 1000, name: "AGXAcceleratorG13G", available: true, memoryUsedAvailable: true).sharedMemoryPressure == .normal)
+        check("gpu discrete VRAM never drives shared pressure", HostGPU(usagePercent: 10, memoryUsedBytes: 999, memoryTotalBytes: 1000, name: "AMDAccelerator", available: true, memoryUsedAvailable: true, memoryIsGARTWindow: true).sharedMemoryPressure == .normal)
+        check("gpu unreadable used counter has no ratio", HostGPU(usagePercent: 10, memoryTotalBytes: 1000, name: "IntelAccelerator", available: true, memoryUsedAvailable: false, memoryIsGARTWindow: true).sharedMemoryUsedRatio == nil)
+        check("pressure merge keeps higher level", MemoryPressureLevel.normal.merged(with: .warning) == .warning && MemoryPressureLevel.critical.merged(with: .warning) == .critical)
+        check("calm memory escalates on GPU shared memory", calmHost.inferredPressure(sourceLevel: .normal).merged(with: gartGPU(950).sharedMemoryPressure) == .critical)
+        check("pressure reasons name GPU shared memory", ResourceHistory.pressureReasons(host: calmHost, source: .normal, gpu: gartGPU(800)).contains("gpu_shared_memory_over_75_percent"))
         check("gpu amd not shared", !HostGPU(usagePercent: 12, memoryUsedBytes: 1, memoryTotalBytes: 2, name: "AMDAccelerator", available: true).isSharedMemory)
 
         let gpuMonitor = SystemMonitor()

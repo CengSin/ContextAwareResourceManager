@@ -13,6 +13,18 @@ public enum MemoryPressureLevel: String, Codable, Sendable, Equatable {
         }
     }
 
+    public var severity: Int {
+        switch self {
+        case .normal: return 0
+        case .warning: return 1
+        case .critical: return 2
+        }
+    }
+
+    public func merged(with other: MemoryPressureLevel) -> MemoryPressureLevel {
+        other.severity > severity ? other : self
+    }
+
     public var symbolName: String {
         switch self {
         case .normal: return "circle.fill"
