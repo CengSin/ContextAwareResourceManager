@@ -154,15 +154,22 @@ final class ConfirmPanelController: NSObject, NSWindowDelegate {
 }
 
 final class ReclaimNotifier: NSObject, UNUserNotificationCenterDelegate {
+    private let center: UNUserNotificationCenter? = {
+        let bundle = Bundle.main
+        guard bundle.bundleURL.pathExtension == "app", bundle.bundleIdentifier != nil else { return nil }
+        return UNUserNotificationCenter.current()
+    }()
+
     func prepare() {
-        UNUserNotificationCenter.current().delegate = self
+        center?.delegate = self
     }
 
     func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        center?.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     func post(_ notice: AutoReclaimNotice) {
+        guard let center else { return }
         let content = UNMutableNotificationContent()
         content.title = notice.title
         content.body = notice.body
@@ -172,7 +179,7 @@ final class ReclaimNotifier: NSObject, UNUserNotificationCenterDelegate {
             content: content,
             trigger: nil
         )
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+        center.add(request, withCompletionHandler: nil)
     }
 
     func userNotificationCenter(
